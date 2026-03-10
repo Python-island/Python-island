@@ -8,15 +8,14 @@
             --border-light: rgba(255, 255, 255, 0.15);
             --accent-green: #30d158;
             --font-main: "Segoe UI Variable Display", "SF Pro Display", -apple-system, sans-serif;
+            --notice-duration: 4s;
         }
 
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            margin: 0; padding: 0;
             width: 100vw; height: 100vh;
-            background-color: rgba(0, 0, 0, 0) !important;
-            margin: 0; padding: 0;
-            width: 100vw; height: 100vh;
-            background: transparent;
+            background: transparent !important;
             display: flex; justify-content: center; align-items: flex-start;
             font-family: var(--font-main);
             overflow: hidden;
@@ -29,8 +28,8 @@
         /* 灵动岛主体 */
         #island-capsule {
             margin-top: 5px;
-            width: 130px; /* 初始宽度 */
-            height: 40px; /* 初始高度 */
+            width: 130px;
+            height: 40px;
             background: var(--bg-glass);
             backdrop-filter: blur(25px) saturate(180%);
             -webkit-backdrop-filter: blur(25px) saturate(180%);
@@ -39,12 +38,14 @@
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 
             display: flex; align-items: center; justify-content: center;
-            transition: all 0.7s cubic-bezier(0.32, 1.5, 0.24, 1); /* 带有回弹的弹性动画 */
+            transition: width 0.55s cubic-bezier(0.32, 1.5, 0.24, 1),
+                        height 0.55s cubic-bezier(0.32, 1.5, 0.24, 1),
+                        background 0.4s ease;
             color: white;
             position: relative;
 
-            -webkit-app-region: no-drag; /* 确保胶囊主体也无法触发拖动 */
-            pointer-events: auto;        /* 允许鼠标事件，但不是拖动 */
+            -webkit-app-region: no-drag;
+            pointer-events: auto;
         }
 
         /* 激活状态 */
@@ -58,7 +59,17 @@
         .content-wrapper {
             display: flex; align-items: center; justify-content: center;
             width: 100%; height: 100%;
-            transition: opacity 0.3s ease;
+            position: absolute;
+            top: 0; left: 0;
+            transition: opacity 0.35s ease, transform 0.35s ease;
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .content-wrapper.hidden {
+            opacity: 0;
+            transform: scale(0.92);
+            pointer-events: none;
         }
 
         /* 时间文本样式 */
@@ -71,18 +82,23 @@
 
         /* 通知区域样式 */
         #notice-area {
-            display: none;
+            display: flex;
             align-items: center;
             gap: 12px;
-            width: 90%;
+            padding: 0 16px;
+            width: 100%;
         }
 
         .icon-box {
             width: 32px; height: 32px;
+            min-width: 32px;
             background: rgba(255,255,255,0.1);
             border-radius: 50%;
             display: flex; align-items: center; justify-content: center;
+            transition: background 0.3s ease;
         }
+
+        .icon-box svg { width: 18px; height: 18px; }
 
         #notice-msg {
             font-size: 15px;
@@ -90,11 +106,38 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            flex: 1;
         }
 
-        /* 辅助动画类 */
-        .fade-out { opacity: 0; transform: scale(0.95); }
-        .fade-in { opacity: 1; transform: scale(1); }
+        /* 通知进度条 */
+        #notice-progress {
+            position: absolute;
+            bottom: 4px;
+            left: 16px;
+            right: 16px;
+            height: 2px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 1px;
+            overflow: hidden;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        #notice-progress.visible { opacity: 1; }
+
+        #notice-progress-bar {
+            height: 100%;
+            background: rgba(255,255,255,0.5);
+            border-radius: 1px;
+            width: 100%;
+            transform-origin: left;
+            transition: none;
+        }
+
+        #notice-progress-bar.animate {
+            transition: transform var(--notice-duration) linear;
+            transform: scaleX(0);
+        }
 
     </style>
 </head>
@@ -105,53 +148,73 @@
             <div id="time-text">00:00:00</div>
         </div>
 
-        <div id="notice-area" class="content-wrapper">
+        <div id="notice-area" class="content-wrapper hidden">
             <div class="icon-box" id="notice-icon">
-                <svg t="1772981818493" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1623" width="200" height="200"><path d="M512 426.688a42.688 42.688 0 0 0-42.688 42.688v298.688a42.688 42.688 0 0 0 85.376 0V469.376A42.688 42.688 0 0 0 512 426.688zM507.776 213.376a59.776 59.776 0 1 0 0 119.552 59.776 59.776 0 0 0 0-119.552z" p-id="1624" fill="#ffffff"></path><path d="M512 0a512 512 0 1 0 0 1024 512 512 0 0 0 0-1024z m0 938.688a426.624 426.624 0 0 1-426.688-426.688c0-235.648 190.976-426.688 426.688-426.688s426.688 190.976 426.688 426.688-190.976 426.688-426.688 426.688z" p-id="1625" fill="#ffffff"></path></svg>
+                <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M512 426.688a42.688 42.688 0 0 0-42.688 42.688v298.688a42.688 42.688 0 0 0 85.376 0V469.376A42.688 42.688 0 0 0 512 426.688zM507.776 213.376a59.776 59.776 0 1 0 0 119.552 59.776 59.776 0 0 0 0-119.552z" fill="#ffffff"/>
+                    <path d="M512 0a512 512 0 1 0 0 1024 512 512 0 0 0 0-1024z m0 938.688a426.624 426.624 0 0 1-426.688-426.688c0-235.648 190.976-426.688 426.688-426.688s426.688 190.976 426.688 426.688-190.976 426.688-426.688 426.688z" fill="#ffffff"/>
+                </svg>
             </div>
             <div id="notice-msg">通知消息</div>
+        </div>
+
+        <div id="notice-progress">
+            <div id="notice-progress-bar"></div>
         </div>
     </div>
 
     <script>
-        const capsule = document.getElementById('island-capsule');
+        const capsule     = document.getElementById('island-capsule');
         const timeWrapper = document.getElementById('time-wrapper');
-        const noticeArea = document.getElementById('notice-area');
-        const timeText = document.getElementById('time-text');
-        const noticeMsg = document.getElementById('notice-msg');
+        const noticeArea  = document.getElementById('notice-area');
+        const timeText    = document.getElementById('time-text');
+        const noticeMsg   = document.getElementById('notice-msg');
+        const progress    = document.getElementById('notice-progress');
+        const progressBar = document.getElementById('notice-progress-bar');
 
         let noticeTimer = null;
 
-        // 更新时间逻辑
-        setInterval(() => {
-            timeText.innerText = new Date().toLocaleTimeString('zh-CN', {hour12: false});
-        }, 1000);
+        // ── 更新时间逻辑 ──
+        function updateTime() {
+            timeText.innerText = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        }
+        updateTime();
+        setInterval(updateTime, 1000);
 
-        // 核心显示逻辑：带转场动画
+        // ── 通知显示逻辑：带渐进动画 ──
         window.showNotice = function(msg) {
-            // 1. 先把时间切走
-            timeWrapper.style.display = 'none';
-
-            // 2. 更新通知内容
+            // 1. 用 CSS class 交叉淡入淡出
+            timeWrapper.classList.add('hidden');
             noticeMsg.innerText = msg;
-            noticeArea.style.display = 'flex';
+            noticeArea.classList.remove('hidden');
 
-            // 3. 3秒后恢复
+            // 2. 启动进度条动画
+            progressBar.classList.remove('animate');
+            void progressBar.offsetWidth; // 触发 reflow 重置动画
+            progress.classList.add('visible');
+            progressBar.classList.add('animate');
+
+            // 3. 定时恢复
             clearTimeout(noticeTimer);
             noticeTimer = setTimeout(() => {
-                noticeArea.style.display = 'none';
-                timeWrapper.style.display = 'flex';
-            }, 3000);
-        }
+                noticeArea.classList.add('hidden');
+                progress.classList.remove('visible');
+                progressBar.classList.remove('animate');
+                // 等淡出动画结束后再显示时间
+                setTimeout(() => {
+                    timeWrapper.classList.remove('hidden');
+                }, 200);
+            }, 4000);
+        };
 
-        // 展开收缩逻辑
+        // ── 展开/收缩逻辑 ──
         window.setExpand = function(val) {
             if (val) {
                 capsule.classList.add('active');
             } else {
                 capsule.classList.remove('active');
             }
-        }
+        };
     </script>
 </body>
 </html>
