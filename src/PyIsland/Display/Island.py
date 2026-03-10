@@ -226,7 +226,6 @@ class DynamicIslandWindow(QWidget):
             self.is_hovered = False
             self.shrink_capsule(animate_font=True)
 
-    # ====================== 核心展示逻辑 ======================
     def show_notification(self, event_data):
         if self.animation_running:
             return
