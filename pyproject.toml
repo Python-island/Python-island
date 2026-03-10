@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "PyIsland"
+version = "0.0.1"
+authors = [
+    { name = "星灿长风v(StarWindv)", email = "starwindv.stv@gmail.com"}
+]
+description = "Dynamic Island on Windows, written in Python"
+readme = "./readme.md"
+license = "GPL-3.0-only"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "pyqt5"
+]
+urls = { "Homepage" = "https://github.com/StarWindv/PyIsland" }
+
+[project.scripts]
+_island_instance = "PyIsland.instance:main"
+island = "PyIsland.main:main"
