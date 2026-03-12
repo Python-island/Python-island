@@ -1,13 +1,18 @@
+"""
+现代化灵动岛 - Windows上的动态岛式小部件。
+"""
 
 import os
 from datetime import datetime
 
 from PySide6.QtCore import (
+    QThread,
     QEasingCurve,
     QPropertyAnimation,
     QRect,
     Qt,
     QTimer,
+    Signal,
 )
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
@@ -27,6 +32,26 @@ from app.utils import (
     set_brightness,
     set_volume,
 )
+
+
+class WorkerThread(QThread):
+    """后台工作线程，用于执行耗时操作。"""
+
+    finished_signal = Signal(object)
+    error_signal = Signal(str)
+
+    def __init__(self, task_func, *args, **kwargs):
+        super().__init__()
+        self.task_func = task_func
+        self.args = args
+        self.kwargs = kwargs
+
+    def run(self):
+        try:
+            result = self.task_func(*self.args, **self.kwargs)
+            self.finished_signal.emit(result)
+        except Exception as e:
+            self.error_signal.emit(str(e))
 
 
 class ModernIsland(QWidget):
@@ -129,24 +154,24 @@ class ModernIsland(QWidget):
 
         # 状态栏信息更新定时器
         self.status_timer = QTimer(self)
-        self.status_timer.timeout.connect(self.update_status)
+        self.status_timer.timeout.connect(self._start_status_update)
         self.status_timer.start(5000)
-        self.update_status()
+        self._start_status_update()
 
         # 亮度调节防抖计时器
         self.debounce_timer = QTimer(self)
         self.debounce_timer.setSingleShot(True)
-        self.debounce_timer.timeout.connect(self.apply_brightness)
+        self.debounce_timer.timeout.connect(self._start_brightness_apply)
         self.current_brightness = 50
 
         # 音量调节防抖计时器
         self.volume_debounce_timer = QTimer(self)
         self.volume_debounce_timer.setSingleShot(True)
-        self.volume_debounce_timer.timeout.connect(self.apply_volume)
+        self.volume_debounce_timer.timeout.connect(self._start_volume_apply)
         self.current_volume = 50
 
-        # 获取并设置系统当前亮度和音量
-        self.set_initial_values()
+        # 加载初始值（异步）
+        self._start_initial_values_load()
 
         self.load_qss()
 
@@ -160,17 +185,67 @@ class ModernIsland(QWidget):
                     20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation
                 )
 
-    def set_initial_values(self):
-        """设置滑块初始值。"""
-        brightness = get_system_brightness()
-        self.bright_slider.setValue(brightness)
-        self.bright_val.setText(f"{brightness}%")
-        self.current_brightness = brightness
+    def _start_initial_values_load(self):
+        """异步加载初始值。"""
+        # 创建线程获取亮度
+        self._brightness_thread = WorkerThread(get_system_brightness)
+        self._brightness_thread.finished_signal.connect(
+            self._on_brightness_loaded
+        )
+        self._brightness_thread.start()
 
-        volume = get_system_volume()
-        self.volume_slider.setValue(volume)
-        self.volume_val.setText(f"{volume}%")
-        self.current_volume = volume
+        # 创建线程获取音量
+        self._volume_thread = WorkerThread(get_system_volume)
+        self._volume_thread.finished_signal.connect(
+            self._on_volume_loaded
+        )
+        self._volume_thread.start()
+
+    def _on_brightness_loaded(self, brightness):
+        """亮度加载完成回调。"""
+        if brightness is not None:
+            brightness = max(0, min(100, brightness))
+            self.bright_slider.setValue(brightness)
+            self.bright_val.setText(f"{brightness}%")
+            self.current_brightness = brightness
+
+    def _on_volume_loaded(self, volume):
+        """音量加载完成回调。"""
+        if volume is not None:
+            volume = max(0, min(100, volume))
+            self.volume_slider.setValue(volume)
+            self.volume_val.setText(f"{volume}%")
+            self.current_volume = volume
+
+    def _start_status_update(self):
+        """启动异步状态更新。"""
+        if hasattr(self, '_status_thread') and self._status_thread.isRunning():
+            return
+        self._status_thread = WorkerThread(get_all_status)
+        self._status_thread.finished_signal.connect(self._on_status_updated)
+        self._status_thread.start()
+
+    def _on_status_updated(self, result):
+        """状态更新完成回调。"""
+        wifi_info, bluetooth_devices, battery_info = result
+
+        ssid, signal = wifi_info
+        if ssid:
+            self.wifi_label.setText(f"WiFi: {ssid} ({signal})")
+        else:
+            self.wifi_label.setText("WiFi: 未连接")
+
+        if bluetooth_devices:
+            device_name, status = bluetooth_devices[0]
+            self.bluetooth_label.setText(f"蓝牙: {device_name} ({status})")
+        else:
+            self.bluetooth_label.setText("蓝牙: 未连接")
+
+        charge, status = battery_info
+        if charge:
+            self.battery_label.setText(f"电池: {charge}% ({status})")
+        else:
+            self.battery_label.setText("电池: 未知")
 
     def create_ctrl_row(self, icon_path, label_text):
         """创建包含图标、标签、滑动条和数值控件的行。"""
@@ -224,13 +299,25 @@ class ModernIsland(QWidget):
             self.volume_debounce_timer.stop()
             self.volume_debounce_timer.start(300)
 
-    def apply_brightness(self):
-        """应用亮度更改到系统。"""
-        set_brightness(self.current_brightness)
+    def _start_brightness_apply(self):
+        """异步应用亮度。"""
+        if hasattr(self, '_brightness_apply_thread') and \
+                self._brightness_apply_thread.isRunning():
+            return
+        self._brightness_apply_thread = WorkerThread(
+            set_brightness, self.current_brightness
+        )
+        self._brightness_apply_thread.start()
 
-    def apply_volume(self):
-        """应用音量更改到系统。"""
-        set_volume(self.current_volume)
+    def _start_volume_apply(self):
+        """异步应用音量。"""
+        if hasattr(self, '_volume_apply_thread') and \
+                self._volume_apply_thread.isRunning():
+            return
+        self._volume_apply_thread = WorkerThread(
+            set_volume, self.current_volume
+        )
+        self._volume_apply_thread.start()
 
     def mousePressEvent(self, event):
         """处理鼠标按下事件用于拖动。"""
@@ -298,28 +385,6 @@ class ModernIsland(QWidget):
         """更新时间显示。"""
         current_time = datetime.now().strftime("%H:%M")
         self.time_label.setText(current_time)
-
-    def update_status(self):
-        """使用统一批量查询更新状态栏信息。"""
-        wifi_info, bluetooth_devices, battery_info = get_all_status()
-
-        ssid, signal = wifi_info
-        if ssid:
-            self.wifi_label.setText(f"WiFi: {ssid} ({signal})")
-        else:
-            self.wifi_label.setText("WiFi: 未连接")
-
-        if bluetooth_devices:
-            device_name, status = bluetooth_devices[0]
-            self.bluetooth_label.setText(f"蓝牙: {device_name} ({status})")
-        else:
-            self.bluetooth_label.setText("蓝牙: 未连接")
-
-        charge, status = battery_info
-        if charge:
-            self.battery_label.setText(f"电池: {charge}% ({status})")
-        else:
-            self.battery_label.setText("电池: 未知")
 
     def load_qss(self):
         """加载QSS样式表。"""
