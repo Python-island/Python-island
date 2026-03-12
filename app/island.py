@@ -1,14 +1,40 @@
-from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QFrame)
-from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, QTimer
-from PySide6.QtGui import QPixmap
+
 import os
 from datetime import datetime
-from app.utils import get_system_brightness, set_brightness, get_system_volume, set_volume, get_all_status
+
+from PySide6.QtCore import (
+    QEasingCurve,
+    QPropertyAnimation,
+    QRect,
+    Qt,
+    QTimer,
+)
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
+
+from app.utils import (
+    get_all_status,
+    get_system_brightness,
+    get_system_volume,
+    set_brightness,
+    set_volume,
+)
+
 
 class ModernIsland(QWidget):
+
     def __init__(self):
         super().__init__()
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setWindowFlags(
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+        )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating, False)
 
@@ -53,31 +79,37 @@ class ModernIsland(QWidget):
         self._icon_cache = {}
         self._preload_icons()
 
-        self.bright_row, self.bright_slider, self.bright_val = self.create_ctrl_row("resources/icons/light.png", "亮度")
-        self.volume_row, self.volume_slider, self.volume_val = self.create_ctrl_row("resources/icons/volume.png", "音量")
+        self.bright_row, self.bright_slider, self.bright_val = \
+            self.create_ctrl_row("resources/icons/light.png", "亮度")
+        self.volume_row, self.volume_slider, self.volume_val = \
+            self.create_ctrl_row("resources/icons/volume.png", "音量")
 
         # 绑定事件
-        self.bright_slider.valueChanged.connect(lambda v: self.update_val(self.bright_val, v, "bright"))
-        self.volume_slider.valueChanged.connect(lambda v: self.update_val(self.volume_val, v, "volume"))
+        self.bright_slider.valueChanged.connect(
+            lambda v: self.update_val(self.bright_val, v, "bright")
+        )
+        self.volume_slider.valueChanged.connect(
+            lambda v: self.update_val(self.volume_val, v, "volume")
+        )
 
         # 3. 状态栏
         self.status_bar = QWidget()
         self.status_layout = QHBoxLayout(self.status_bar)
         self.status_layout.setContentsMargins(10, 5, 10, 5)
         self.status_layout.setSpacing(15)
-        
+
         # WiFi信息
         self.wifi_label = QLabel("WiFi: 未连接")
         self.wifi_label.setObjectName("StatusLabel")
-        
+
         # 蓝牙信息
         self.bluetooth_label = QLabel("蓝牙: 未连接")
         self.bluetooth_label.setObjectName("StatusLabel")
-        
+
         # 电池信息
         self.battery_label = QLabel("电池: 未知")
         self.battery_label.setObjectName("StatusLabel")
-        
+
         self.status_layout.addWidget(self.wifi_label)
         self.status_layout.addWidget(self.bluetooth_label)
         self.status_layout.addWidget(self.battery_label)
@@ -86,25 +118,25 @@ class ModernIsland(QWidget):
         self.ctrl_layout.addLayout(self.volume_row)
         self.ctrl_layout.addWidget(self.status_bar)
         self.layout.addWidget(self.controls)
-        
+
         # 时间更新定时器
         self.time_timer = QTimer(self)
         self.time_timer.timeout.connect(self.update_time)
-        self.time_timer.start(1000)  # 每秒更新一次
-        self.update_time()  # 立即更新一次
-        
+        self.time_timer.start(1000)
+        self.update_time()
+
         # 状态栏信息更新定时器
         self.status_timer = QTimer(self)
         self.status_timer.timeout.connect(self.update_status)
-        self.status_timer.start(5000)  # 每5秒更新一次
-        self.update_status()  # 立即更新一次
+        self.status_timer.start(5000)
+        self.update_status()
 
-        # 防抖计时器
+        # 亮度调节防抖计时器
         self.debounce_timer = QTimer(self)
         self.debounce_timer.setSingleShot(True)
         self.debounce_timer.timeout.connect(self.apply_brightness)
         self.current_brightness = 50
-        
+
         # 音量调节防抖计时器
         self.volume_debounce_timer = QTimer(self)
         self.volume_debounce_timer.setSingleShot(True)
@@ -117,40 +149,43 @@ class ModernIsland(QWidget):
         self.load_qss()
 
     def _preload_icons(self):
+        """预加载图标以提高性能。"""
         icon_files = ["resources/icons/light.png", "resources/icons/volume.png"]
         for path in icon_files:
             if os.path.exists(path):
                 pixmap = QPixmap(path)
-                self._icon_cache[path] = pixmap.scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self._icon_cache[path] = pixmap.scaled(
+                    20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
 
     def set_initial_values(self):
-        """设置初始值"""        # 设置亮度滑块初始值
+        """设置滑块初始值。"""
         brightness = get_system_brightness()
         self.bright_slider.setValue(brightness)
         self.bright_val.setText(f"{brightness}%")
         self.current_brightness = brightness
-        
-        # 设置音量滑块初始值
+
         volume = get_system_volume()
         self.volume_slider.setValue(volume)
         self.volume_val.setText(f"{volume}%")
         self.current_volume = volume
 
     def create_ctrl_row(self, icon_path, label_text):
+        """创建包含图标、标签、滑动条和数值控件的行。"""
         row = QHBoxLayout()
         row.setSpacing(12)
 
-        # 图标 (使用缓存的图片或备用符号)
+        # 图标（使用缓存或备用符号）
         icon = QLabel()
         icon.setObjectName("IconLabel")
 
         if icon_path in self._icon_cache:
             icon.setPixmap(self._icon_cache[icon_path])
         elif label_text == "亮度":
-            icon.setText("󰃠")
+            icon.setText("\u0f0a0")
         else:
-            icon.setText("󰕾")
-        
+            icon.setText("\u0f05a")
+
         # 标签文本
         label = QLabel(label_text)
         label.setObjectName("ValueLabel")
@@ -161,7 +196,7 @@ class ModernIsland(QWidget):
         slider.setRange(0, 100)
         slider.setFixedHeight(32)
         slider.setObjectName("CapsuleSlider")
-        slider.setFixedWidth(180)  # 缩短滑动条宽度，为标签留出空间
+        slider.setFixedWidth(180)
 
         # 百分比数值
         val_label = QLabel("50%")
@@ -175,93 +210,95 @@ class ModernIsland(QWidget):
 
         return row, slider, val_label
 
-    def update_val(self, label, value, type):
+    def update_val(self, label, value, val_type):
+        """更新数值标签并触发防抖应用。"""
         label.setText(f"{value}%")
-        if type == "bright":
+        if val_type == "bright":
             self.current_brightness = value
-            # 重置防抖计时器
             self.debounce_timer.stop()
-            self.debounce_timer.start(300)  # 300毫秒防抖
-        elif type == "volume":
+            self.debounce_timer.start(300)
+        elif val_type == "volume":
             self.current_volume = value
-            # 重置音量防抖计时器
             self.volume_debounce_timer.stop()
-            self.volume_debounce_timer.start(300)  # 300毫秒防抖
+            self.volume_debounce_timer.start(300)
 
     def apply_brightness(self):
-        # 使用utils中的set_brightness函数
+        """应用亮度更改到系统。"""
         set_brightness(self.current_brightness)
 
     def apply_volume(self):
-        # 使用utils中的set_volume函数
+        """应用音量更改到系统。"""
         set_volume(self.current_volume)
 
     def mousePressEvent(self, event):
+        """处理鼠标按下事件用于拖动。"""
         if event.button() == Qt.LeftButton:
-            # 记录拖动开始位置
             self.dragging = True
             self.drag_start_pos = event.globalPos()
             self.window_start_pos = self.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, event):
+        """处理鼠标移动事件用于拖动。"""
         if self.dragging:
-            # 计算拖动距离
             delta = event.globalPos() - self.drag_start_pos
-            # 移动窗口
             self.move(self.window_start_pos + delta)
 
     def mouseReleaseEvent(self, event):
+        """处理鼠标释放事件 - 点击时切换，结束时停止拖动。"""
         if event.button() == Qt.LeftButton:
-            # 检查是否是点击（移动距离很小）
-            if self.dragging and (event.globalPos() - self.drag_start_pos).manhattanLength() < 5:
-                # 是点击，触发展开/折叠
+            if self.dragging and \
+                    (event.globalPos() - self.drag_start_pos).manhattanLength() < 5:
                 self.toggle_island()
-            # 结束拖动
             self.dragging = False
 
     def on_focus_changed(self, old_widget, new_widget):
-        # 当焦点从灵动岛或其子控件移开，且处于展开状态时，自动收缩
+        """失去焦点时自动收缩。"""
         if self.is_expanded:
-            # 检查新焦点是否在灵动岛内
             current_widget = new_widget
             while current_widget:
                 if current_widget == self:
-                    return  # 焦点仍在灵动岛内，不收缩
+                    return
                 current_widget = current_widget.parent()
-            # 焦点不在灵动岛内，收缩
             self.toggle_island()
 
     def toggle_island(self):
+        """在展开和折叠状态之间切换。"""
         self.ani = QPropertyAnimation(self, b"geometry")
         self.ani.setDuration(450)
         self.ani.setEasingCurve(QEasingCurve.OutQuart)
 
-        # 获取当前窗口位置
         current_pos = self.pos()
-        
+
         if not self.is_expanded:
-            # 保持当前位置，只改变大小
-            new_rect = QRect(current_pos.x(), current_pos.y(), self.exp_rect.width(), self.exp_rect.height())
+            new_rect = QRect(
+                current_pos.x(), current_pos.y(),
+                self.exp_rect.width(), self.exp_rect.height()
+            )
             self.ani.setEndValue(new_rect)
             self.time_label.hide()
             self.controls.show()
         else:
-            # 保持当前位置，只改变大小
-            new_rect = QRect(current_pos.x(), current_pos.y(), self.col_rect.width(), self.col_rect.height())
+            new_rect = QRect(
+                current_pos.x(), current_pos.y(),
+                self.col_rect.width(), self.col_rect.height()
+            )
             self.ani.setEndValue(new_rect)
             self.controls.hide()
             self.time_label.show()
 
-        self.ani.valueChanged.connect(lambda g: self.container.setFixedSize(g.width(), g.height()))
+        self.ani.valueChanged.connect(
+            lambda g: self.container.setFixedSize(g.width(), g.height())
+        )
         self.ani.start()
         self.is_expanded = not self.is_expanded
 
     def update_time(self):
-        """更新时间显示"""
+        """更新时间显示。"""
         current_time = datetime.now().strftime("%H:%M")
         self.time_label.setText(current_time)
 
     def update_status(self):
+        """使用统一批量查询更新状态栏信息。"""
         wifi_info, bluetooth_devices, battery_info = get_all_status()
 
         ssid, signal = wifi_info
@@ -283,5 +320,6 @@ class ModernIsland(QWidget):
             self.battery_label.setText("电池: 未知")
 
     def load_qss(self):
+        """加载QSS样式表。"""
         with open("resources/styles/style.qss", "r", encoding="utf-8") as f:
             self.setStyleSheet(f.read())
