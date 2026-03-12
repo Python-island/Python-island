@@ -11,6 +11,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -29,6 +30,7 @@ from app.utils import (
 
 
 class ModernIsland(QWidget):
+    """带展开式控制面板的现代化灵动岛小部件。"""
 
     def __init__(self):
         super().__init__()

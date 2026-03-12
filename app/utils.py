@@ -1,16 +1,6 @@
 
 import json
-import os
 import subprocess
-import ctypes
-from datetime import datetime
-
-# 尝试从comtypes导入COMError
-try:
-    from comtypes import COMError
-except ImportError:
-    class COMError(Exception):
-        pass
 
 # 尝试导入亮度控制库
 try:
@@ -43,8 +33,6 @@ try:
     try:
         pythoncom.CoInitialize()
         try:
-            from ctypes import cast, POINTER
-            from comtypes import CLSCTX_ALL
             from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
             devices = AudioUtilities.GetSpeakers()
             endpoint = devices.EndpointVolume
@@ -60,22 +48,6 @@ try:
         volume_object = None
 except ImportError:
     windows_api_available = False
-
-
-class CoreAudioController:
-    """虚拟CoreAudioController，用于避免访问冲突。"""
-
-    def __init__(self):
-        self.volume_interface = None
-
-    def get_volume(self):
-        return 0.5
-
-    def set_volume(self, level):
-        return False
-
-
-core_audio_controller = CoreAudioController()
 
 
 def get_system_brightness():
@@ -268,74 +240,3 @@ def get_all_status():
         pass
 
     return wifi_info, bluetooth_devices, battery_info
-
-
-def get_wifi_info():
-    """获取WiFi信息。"""
-    try:
-        cmd = "netsh wlan show interfaces | Select-String 'SSID', 'State', 'Signal'"
-        result = subprocess.run(
-            ["powershell", "-Command", cmd],
-            capture_output=True, text=True, check=True
-        )
-        output = result.stdout.strip()
-        lines = output.split('\n')
-
-        ssid = ""
-        signal = ""
-
-        for line in lines:
-            if 'SSID' in line:
-                ssid = line.split(':')[1].strip()
-            elif 'Signal' in line:
-                signal = line.split(':')[1].strip()
-
-        return ssid, signal
-    except Exception:
-        return "", ""
-
-
-def get_bluetooth_devices():
-    """获取蓝牙设备信息。"""
-    try:
-        cmd = "Get-PnpDevice -Class Bluetooth | Select-Object FriendlyName, Status | ConvertTo-Csv -NoTypeInformation"
-        result = subprocess.run(
-            ["powershell", "-Command", cmd],
-            capture_output=True, text=True, check=True
-        )
-        output = result.stdout.strip()
-        lines = output.split('\n')[1:]
-
-        devices = []
-        for line in lines:
-            if line:
-                parts = line.strip('"').split('","')
-                if len(parts) >= 2:
-                    devices.append((parts[0], parts[1]))
-
-        return devices
-    except Exception:
-        return []
-
-
-def get_battery_info():
-    """获取电池信息。"""
-    try:
-        cmd = "Get-WmiObject -Class Win32_Battery | Select-Object EstimatedChargeRemaining, BatteryStatus | ConvertTo-Csv -NoTypeInformation"
-        result = subprocess.run(
-            ["powershell", "-Command", cmd],
-            capture_output=True, text=True, check=True
-        )
-        output = result.stdout.strip()
-        lines = output.split('\n')[1:]
-
-        if lines:
-            parts = lines[0].strip('"').split('","')
-            if len(parts) >= 2:
-                charge = parts[0]
-                status = parts[1]
-                return charge, status
-
-        return "", ""
-    except Exception:
-        return "", ""
