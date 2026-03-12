@@ -1,6 +1,7 @@
 import os
 import subprocess
 import ctypes
+
 # 尝试从comtypes导入COMError
 try:
     from comtypes import COMError
@@ -202,6 +203,80 @@ def set_volume(value):
             pass
 
 
+def get_all_status():
+    wifi_info = ("", "")
+    bluetooth_devices = []
+    battery_info = ("", "")
+
+    try:
+        # 合并所有查询到一个 PowerShell 脚本
+        script = '''
+        $result = @{}
+        try {
+            $wifi = netsh wlan show interfaces | Select-String 'SSID', 'Signal'
+            $ssid = ""
+            $signal = ""
+            foreach ($line in $wifi) {
+                if ($line -match "SSID.*:") { $ssid = ($line -split ":")[-1].Trim() }
+                if ($line -match "Signal.*:") { $signal = ($line -split ":")[-1].Trim() }
+            }
+            $result["wifi_ssid"] = $ssid
+            $result["wifi_signal"] = $signal
+        } catch {
+            $result["wifi_ssid"] = ""
+            $result["wifi_signal"] = ""
+        }
+        try {
+            $bt = Get-PnpDevice -Class Bluetooth | Select-Object FriendlyName, Status
+            $devices = @()
+            foreach ($d in $bt) {
+                if ($d.FriendlyName) { $devices += @($d.FriendlyName, $d.Status) }
+            }
+            $result["bluetooth"] = $devices
+        } catch {
+            $result["bluetooth"] = @()
+        }
+        try {
+            $batt = Get-WmiObject -Class Win32_Battery | Select-Object EstimatedChargeRemaining, BatteryStatus
+            if ($batt) {
+                $result["battery_charge"] = $batt.EstimatedChargeRemaining
+                $result["battery_status"] = $batt.BatteryStatus
+            } else {
+                $result["battery_charge"] = ""
+                $result["battery_status"] = ""
+            }
+        } catch {
+            $result["battery_charge"] = ""
+            $result["battery_status"] = ""
+        }
+        $result | ConvertTo-Json -Compress
+        '''
+        result = subprocess.run(
+            ["powershell", "-Command", script],
+            capture_output=True, text=True, check=True, timeout=10
+        )
+        import json
+        data = json.loads(result.stdout.strip())
+
+        wifi_info = (data.get("wifi_ssid", ""), data.get("wifi_signal", ""))
+
+        bt_list = data.get("bluetooth", [])
+        if bt_list:
+            bluetooth_devices = [(bt_list[i], bt_list[i+1]) for i in range(0, len(bt_list), 2)]
+        else:
+            bluetooth_devices = []
+
+        charge = data.get("battery_charge", "")
+        status = data.get("battery_status", "")
+        if charge:
+            status_map = {"1": "放电", "2": "接通电源", "3": "完全充电", "4": "低", "5": "临界", "6": "充电", "7": "充电过高", "8": "未知"}
+            battery_info = (str(charge), status_map.get(str(status), str(status)))
+    except:
+        pass
+
+    return wifi_info, bluetooth_devices, battery_info
+
+
 def get_wifi_info():
     """获取WiFi信息"""
     try:
@@ -249,7 +324,6 @@ def get_bluetooth_devices():
 
 
 def get_battery_info():
-    """获取电池信息"""
     try:
         # 使用PowerShell获取电池信息
         cmd = "Get-WmiObject -Class Win32_Battery | Select-Object EstimatedChargeRemaining, BatteryStatus | ConvertTo-Csv -NoTypeInformation"

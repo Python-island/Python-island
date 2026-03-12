@@ -2,7 +2,8 @@ from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
 from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, QTimer
 from PySide6.QtGui import QPixmap
 import os
-from app.utils import get_system_brightness, set_brightness, get_system_volume, set_volume, get_wifi_info, get_bluetooth_devices, get_battery_info
+from datetime import datetime
+from app.utils import get_system_brightness, set_brightness, get_system_volume, set_volume, get_all_status
 
 class ModernIsland(QWidget):
     def __init__(self):
@@ -48,6 +49,10 @@ class ModernIsland(QWidget):
         self.ctrl_layout.setSpacing(15)
 
         # 创建亮度与音量控制行
+        # 先初始化图标缓存
+        self._icon_cache = {}
+        self._preload_icons()
+
         self.bright_row, self.bright_slider, self.bright_val = self.create_ctrl_row("resources/icons/light.png", "亮度")
         self.volume_row, self.volume_slider, self.volume_val = self.create_ctrl_row("resources/icons/volume.png", "音量")
 
@@ -111,42 +116,15 @@ class ModernIsland(QWidget):
 
         self.load_qss()
 
-    def get_system_brightness(self):
-        """获取系统当前亮度"""
-        try:
-            brightness = sbc.get_brightness()[0]
-            return brightness
-        except:
-            return 50  # 默认值
-
-    def get_system_volume(self):
-        """获取系统当前音量"""
-        # 首先尝试使用pycaw
-        if volume_available:
-            try:
-                devices = AudioUtilities.GetSpeakers()
-                interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                volume = interface.QueryInterface(IAudioEndpointVolume)
-                # 将音量从0-1范围转换为0-100
-                return int(volume.GetMasterVolumeLevelScalar() * 100)
-            except:
-                pass
-        
-        # 如果pycaw失败，尝试使用PowerShell
-        try:
-            # 使用PowerShell获取音量
-            cmd = "(Get-SoundVolume).VolumeLevel"
-            result = subprocess.run(["powershell", "-Command", cmd], 
-                                  capture_output=True, text=True, check=True)
-            volume = int(result.stdout.strip())
-            # 确保音量在0-100范围内
-            return max(0, min(100, volume))
-        except:
-            return 50  # 默认值
+    def _preload_icons(self):
+        icon_files = ["resources/icons/light.png", "resources/icons/volume.png"]
+        for path in icon_files:
+            if os.path.exists(path):
+                pixmap = QPixmap(path)
+                self._icon_cache[path] = pixmap.scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
     def set_initial_values(self):
-        """设置初始值"""
-        # 设置亮度滑块初始值
+        """设置初始值"""        # 设置亮度滑块初始值
         brightness = get_system_brightness()
         self.bright_slider.setValue(brightness)
         self.bright_val.setText(f"{brightness}%")
@@ -162,21 +140,16 @@ class ModernIsland(QWidget):
         row = QHBoxLayout()
         row.setSpacing(12)
 
-        # 图标 (使用图片或备用符号)
+        # 图标 (使用缓存的图片或备用符号)
         icon = QLabel()
         icon.setObjectName("IconLabel")
-        
-        # 尝试加载图片图标
-        if icon_path and os.path.exists(icon_path):
-            pixmap = QPixmap(icon_path)
-            pixmap = pixmap.scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            icon.setPixmap(pixmap)
+
+        if icon_path in self._icon_cache:
+            icon.setPixmap(self._icon_cache[icon_path])
+        elif label_text == "亮度":
+            icon.setText("󰃠")
         else:
-            # 使用备用符号
-            if label_text == "亮度":
-                icon.setText("󰃠")
-            else:
-                icon.setText("󰕾")
+            icon.setText("󰕾")
         
         # 标签文本
         label = QLabel(label_text)
@@ -285,30 +258,25 @@ class ModernIsland(QWidget):
 
     def update_time(self):
         """更新时间显示"""
-        from datetime import datetime
         current_time = datetime.now().strftime("%H:%M")
         self.time_label.setText(current_time)
 
     def update_status(self):
-        """更新状态栏信息"""
-        # 更新WiFi信息
-        ssid, signal = get_wifi_info()
+        wifi_info, bluetooth_devices, battery_info = get_all_status()
+
+        ssid, signal = wifi_info
         if ssid:
             self.wifi_label.setText(f"WiFi: {ssid} ({signal})")
         else:
             self.wifi_label.setText("WiFi: 未连接")
-        
-        # 更新蓝牙信息
-        devices = get_bluetooth_devices()
-        if devices:
-            # 显示第一个蓝牙设备
-            device_name, status = devices[0]
+
+        if bluetooth_devices:
+            device_name, status = bluetooth_devices[0]
             self.bluetooth_label.setText(f"蓝牙: {device_name} ({status})")
         else:
             self.bluetooth_label.setText("蓝牙: 未连接")
-        
-        # 更新电池信息
-        charge, status = get_battery_info()
+
+        charge, status = battery_info
         if charge:
             self.battery_label.setText(f"电池: {charge}% ({status})")
         else:
