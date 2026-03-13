@@ -22,10 +22,13 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
     QHBoxLayout,
+    QLayout,
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
+    QSpacerItem,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -78,6 +81,8 @@ class ModernIsland(QWidget):
         self.screen_w = QApplication.primaryScreen().size().width()
         self.screen_h = QApplication.primaryScreen().size().height()
         self.max_expand_h = self.screen_h // 3  # 最大展开高度为屏幕的1/3
+        # 多 URL 页面：scroll 与按钮区的垂直间距（按钮下移）
+        self.multi_url_btn_top_spacing = 35
         self.col_rect = QRect((self.screen_w - 180) // 2, 20, 180, 40)
         self.exp_rect = QRect((self.screen_w - 360) // 2, 20, 360, 160)
         self.setGeometry(self.col_rect)
@@ -217,6 +222,7 @@ class ModernIsland(QWidget):
         self.ctrl_layout.addWidget(self.status_bar)
 
         # 设置 stacked widget 高度
+        # 注意：controls 的高度需要随展开高度动态变化，否则多 URL 页面会被压缩导致按钮与 scroll 重叠
         self.controls.setFixedHeight(120)
 
         # 添加到主布局
@@ -605,12 +611,8 @@ class ModernIsland(QWidget):
         else:
             # 多个 URL - 切换到多URL页面
             self.controls.setCurrentWidget(self.url_multi_page)
-            self._build_multi_url_page(urls)
-
-            # 计算多URL页面的高度 - 简化计算，确保按钮在下方
-            visible_count = min(len(urls), 6)
-            # 标题30 + URL项(28*数量) + 按钮60 + 间距20 + margin上下30
-            target_height = 30 + (visible_count * 28) + 60 + 40
+            # 由页面构建函数返回目标高度（包含 scroll/按钮间距等），避免高度压缩导致间距“看起来不变”
+            target_height = self._build_multi_url_page(urls)
             # 限制最大高度
             target_height = min(target_height, self.max_expand_h)
 
@@ -629,10 +631,7 @@ class ModernIsland(QWidget):
     def _build_single_url_page(self, url: str):
         """构建单个 URL 的页面。"""
         # 清空之前的内容
-        while self.url_single_layout.count():
-            item = self.url_single_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        self._clear_layout(self.url_single_layout)
 
         # 标题
         title = QLabel("检测到链接")
@@ -663,49 +662,55 @@ class ModernIsland(QWidget):
 
     def _build_multi_url_page(self, urls: list):
         """构建多个 URL 的选择页面。"""
-        # 清空之前的内容
-        while self.url_multi_layout.count():
-            item = self.url_multi_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        # 清空之前的内容（包含 spacer / 子 layout）
+        self._clear_layout(self.url_multi_layout)
 
         # 标题
         title = QLabel(f"检测到 {len(urls)} 个链接")
         title.setObjectName("DialogTitle")
         self.url_multi_layout.addWidget(title)
 
-        # 创建滚动区域 - 不设置固定高度，让它自动填充
+        # 计算高度 - 根据URL数量动态调整
+        visible_count = min(len(urls), 6)
+        item_height = 32  # 每个URL项的高度
+        scroll_height = visible_count * item_height + 10  # scroll区域高度
+
+        # 创建滚动区域 - 设置固定高度
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded if len(urls) > 6 else Qt.ScrollBarAlwaysOff)
         scroll.setObjectName("UrlScrollArea")
+        scroll.setFixedHeight(scroll_height)
 
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(0, 5, 0, 5)
-        scroll_layout.setSpacing(3)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(0)
 
         # URL 列表
-        visible_count = min(len(urls), 6)
         for i, url in enumerate(urls[:visible_count]):
             url_text = url[:35] + "..." if len(url) > 35 else url
             url_label = QLabel(f"{i+1}. {url_text}")
             url_label.setObjectName("UrlLabel")
-            url_label.setWordWrap(True)
-            url_label.setStyleSheet("padding: 4px 5px;")
+            url_label.setMinimumHeight(item_height)
+            url_label.setAlignment(Qt.AlignVCenter)
             scroll_layout.addWidget(url_label)
 
         if len(urls) > visible_count:
             more_label = QLabel(f"...还有 {len(urls) - visible_count} 个")
             more_label.setObjectName("StatusLabel")
-            more_label.setStyleSheet("padding: 4px 5px;")
+            more_label.setMinimumHeight(item_height)
+            more_label.setAlignment(Qt.AlignVCenter)
             scroll_layout.addWidget(more_label)
 
         scroll.setWidget(scroll_content)
-        self.url_multi_layout.addWidget(scroll, 1)  # stretch=1 让scroll自动填充
+        self.url_multi_layout.addWidget(scroll)
 
-        # 按钮区域 - 使用固定高度确保不与scroll重叠
+        # scroll 与按钮之间固定间距（按钮下移）
+        self.url_multi_layout.addSpacing(self.multi_url_btn_top_spacing)
+
+        # 按钮区域
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
@@ -719,9 +724,23 @@ class ModernIsland(QWidget):
 
         btn_layout.addWidget(ignore_btn)
         btn_layout.addWidget(open_all_btn)
-
-        # 按钮区域不设置 stretch，保证在底部
         self.url_multi_layout.addLayout(btn_layout)
+
+        # 返回目标高度
+        # 标题30 + scroll高度 + 间距 + 按钮50 + margin
+        target_height = 30 + scroll_height + self.multi_url_btn_top_spacing + 50 + 20
+        return target_height
+
+    def _clear_layout(self, layout: QLayout):
+        """递归清空 layout，确保 spacer/layout 也被移除。"""
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+                continue
+            if item.layout():
+                self._clear_layout(item.layout())
+                continue
 
     def _expand_to_url_page(self, target_height: int = 160):
         """展开灵动岛。"""
@@ -750,8 +769,23 @@ class ModernIsland(QWidget):
         self.ani.setStartValue(start)
         self.ani.setEndValue(end)
 
-        self.ani.finished.connect(lambda: self.container.setFixedSize(current_w, to_h))
+        # 动画进行中同步更新容器与 controls 高度
+        self.ani.valueChanged.connect(lambda value: (
+            self.container.setFixedSize(current_w, value.height()),
+            self._set_controls_height(value.height())
+        ))
+
+        self.ani.finished.connect(lambda: (
+            self.container.setFixedSize(current_w, to_h),
+            self._set_controls_height(to_h)
+        ))
         self.ani.start()
+
+    def _set_controls_height(self, container_h: int):
+        """根据容器高度同步设置 controls 高度（避免内容被压缩）。"""
+        # 40px 为顶部时间/日期区域高度
+        controls_h = max(0, int(container_h) - 40)
+        self.controls.setFixedHeight(controls_h)
 
     def _do_expand_and_show_url(self, target_height: int = 160):
         """执行展开动画并显示链接页面。"""
@@ -784,13 +818,15 @@ class ModernIsland(QWidget):
         # 动画进行中动态调整
         self.ani.valueChanged.connect(lambda value: (
             self.controls.show() if value.width() > 50 else None,
-            self.container.setFixedSize(value.width(), 40 + (target_height - 40) * (value.width() / 360))
+            self.container.setFixedSize(value.width(), 40 + (target_height - 40) * (value.width() / 360)),
+            self._set_controls_height(40 + (target_height - 40) * (value.width() / 360))
         ))
 
         # 动画结束后确保尺寸正确
         self.ani.finished.connect(lambda: (
             self.controls.show(),
-            self.container.setFixedSize(360, target_height)
+            self.container.setFixedSize(360, target_height),
+            self._set_controls_height(target_height)
         ))
 
         self.ani.start()
