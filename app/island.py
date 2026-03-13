@@ -119,15 +119,22 @@ class ModernIsland(QWidget):
         self.ctrl_layout.setContentsMargins(5, 20, 5, 10)
         self.ctrl_layout.setSpacing(15)
 
-        # 页面1: 链接提示页面
-        self.url_page = QWidget()
-        self.url_layout = QVBoxLayout(self.url_page)
-        self.url_layout.setContentsMargins(10, 15, 10, 15)
-        self.url_layout.setSpacing(10)
+        # 页面1: 单URL提示页面
+        self.url_single_page = QWidget()
+        self.url_single_layout = QVBoxLayout(self.url_single_page)
+        self.url_single_layout.setContentsMargins(10, 15, 10, 15)
+        self.url_single_layout.setSpacing(10)
+
+        # 页面2: 多URL提示页面
+        self.url_multi_page = QWidget()
+        self.url_multi_layout = QVBoxLayout(self.url_multi_page)
+        self.url_multi_layout.setContentsMargins(10, 15, 10, 15)
+        self.url_multi_layout.setSpacing(10)
 
         # 将页面添加到 stacked widget
         self.controls.addWidget(self.ctrl_page)
-        self.controls.addWidget(self.url_page)
+        self.controls.addWidget(self.url_single_page)
+        self.controls.addWidget(self.url_multi_page)
 
         # 创建亮度控制行
         # 先初始化图标缓存
@@ -427,6 +434,9 @@ class ModernIsland(QWidget):
         current_pos = self.pos()
 
         if not self.is_expanded:
+            # 立即标记为展开状态，防止重复触发
+            self.is_expanded = True
+
             # 展开动画 - 立即隐藏时间，动画结束后显示日期+时间
             self.time_label.hide()
             self.date_label.hide()
@@ -456,6 +466,9 @@ class ModernIsland(QWidget):
             self.ani.start()
 
         else:
+            # 立即标记为折叠状态
+            self.is_expanded = False
+
             # 折叠动画 - 立即隐藏日期，动画结束后显示时间
             self.date_label.hide()
             self.time_label.hide()
@@ -484,8 +497,6 @@ class ModernIsland(QWidget):
             ))
 
             self.ani.start()
-
-        self.is_expanded = not self.is_expanded
 
     def update_time(self):
         """更新时间显示。"""
@@ -576,35 +587,45 @@ class ModernIsland(QWidget):
 
     def _show_url_notification(self, urls: list):
         """显示 URL 通知在灵动岛内部。"""
-        # 清空之前的 URL 页面内容
-        while self.url_layout.count():
-            item = self.url_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
         if len(urls) == 1:
-            # 单个 URL
-            url = urls[0]
-            self._build_single_url_page(url)
+            # 单个 URL - 切换到单URL页面
+            self.controls.setCurrentWidget(self.url_single_page)
+            self._build_single_url_page(urls[0])
         else:
-            # 多个 URL
+            # 多个 URL - 切换到多URL页面
+            self.controls.setCurrentWidget(self.url_multi_page)
             self._build_multi_url_page(urls)
 
-        # 展开灵动岛并显示链接页面
+        # 展开灵动岛
         self._expand_to_url_page()
+
+        # 5秒后自动关闭
+        if hasattr(self, '_url_auto_close_timer') and self._url_auto_close_timer.isActive():
+            self._url_auto_close_timer.stop()
+
+        self._url_auto_close_timer = QTimer(self)
+        self._url_auto_close_timer.setSingleShot(True)
+        self._url_auto_close_timer.timeout.connect(self._close_url_page)
+        self._url_auto_close_timer.start(5000)
 
     def _build_single_url_page(self, url: str):
         """构建单个 URL 的页面。"""
+        # 清空之前的内容
+        while self.url_single_layout.count():
+            item = self.url_single_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
         # 标题
         title = QLabel("检测到链接")
         title.setObjectName("DialogTitle")
-        self.url_layout.addWidget(title)
+        self.url_single_layout.addWidget(title)
 
         # URL 显示
         url_label = QLabel(url[:45] + "..." if len(url) > 45 else url)
         url_label.setObjectName("UrlLabel")
         url_label.setWordWrap(True)
-        self.url_layout.addWidget(url_label)
+        self.url_single_layout.addWidget(url_label)
 
         # 按钮区域
         btn_layout = QHBoxLayout()
@@ -620,14 +641,20 @@ class ModernIsland(QWidget):
 
         btn_layout.addWidget(cancel_btn)
         btn_layout.addWidget(open_btn)
-        self.url_layout.addLayout(btn_layout)
+        self.url_single_layout.addLayout(btn_layout)
 
     def _build_multi_url_page(self, urls: list):
         """构建多个 URL 的选择页面。"""
+        # 清空之前的内容
+        while self.url_multi_layout.count():
+            item = self.url_multi_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
         # 标题
         title = QLabel(f"检测到 {len(urls)} 个链接")
         title.setObjectName("DialogTitle")
-        self.url_layout.addWidget(title)
+        self.url_multi_layout.addWidget(title)
 
         # URL 列表（只显示前3个，超出提示）
         for i, url in enumerate(urls[:3]):
@@ -635,12 +662,12 @@ class ModernIsland(QWidget):
             url_label = QLabel(f"{i+1}. {url_text}")
             url_label.setObjectName("UrlLabel")
             url_label.setWordWrap(True)
-            self.url_layout.addWidget(url_label)
+            self.url_multi_layout.addWidget(url_label)
 
         if len(urls) > 3:
             more_label = QLabel(f"...还有 {len(urls) - 3} 个链接")
             more_label.setObjectName("StatusLabel")
-            self.url_layout.addWidget(more_label)
+            self.url_multi_layout.addWidget(more_label)
 
         # 按钮区域
         btn_layout = QHBoxLayout()
@@ -656,17 +683,15 @@ class ModernIsland(QWidget):
 
         btn_layout.addWidget(ignore_btn)
         btn_layout.addWidget(open_all_btn)
-        self.url_layout.addLayout(btn_layout)
+        self.url_multi_layout.addLayout(btn_layout)
 
     def _expand_to_url_page(self):
-        """展开灵动岛并显示链接页面。"""
-        # 如果已经展开，直接切换页面
+        """展开灵动岛。"""
+        # 如果已经展开，直接返回
         if self.is_expanded:
-            self.controls.setCurrentWidget(self.url_page)
             return
 
         # 未展开，先展开
-        self._last_expanded_page = "url"  # 记录展开来源
         self._do_expand_and_show_url()
 
     def _do_expand_and_show_url(self):
@@ -694,16 +719,14 @@ class ModernIsland(QWidget):
         self.ani.setStartValue(start)
         self.ani.setEndValue(end)
 
-        # 动画结束后显示链接页面
+        # 动画结束后显示控制区域
         self.ani.finished.connect(lambda: (
             self.controls.show(),
-            self.controls.setCurrentWidget(self.url_page),
             self.container.setFixedSize(360, 160)
         ))
 
         self.ani.start()
         self.is_expanded = True
-        self._expanded_page = "url"
 
     def _close_url_page(self):
         """关闭链接页面，收起灵动岛。"""
