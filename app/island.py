@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSlider,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -108,13 +109,25 @@ class ModernIsland(QWidget):
         self.date_label.hide()
         self.date_label.setParent(self.container)
 
-        # 2. 展开态内容：控制组
-        self.controls = QWidget()
+        # 2. 展开态内容：使用 StackedWidget 管理多个页面
+        self.controls = QStackedWidget()
         self.controls.hide()
-        self.controls.setFixedHeight(120)
-        self.ctrl_layout = QVBoxLayout(self.controls)
+
+        # 页面0: 控制面板
+        self.ctrl_page = QWidget()
+        self.ctrl_layout = QVBoxLayout(self.ctrl_page)
         self.ctrl_layout.setContentsMargins(5, 20, 5, 10)
         self.ctrl_layout.setSpacing(15)
+
+        # 页面1: 链接提示页面
+        self.url_page = QWidget()
+        self.url_layout = QVBoxLayout(self.url_page)
+        self.url_layout.setContentsMargins(10, 15, 10, 15)
+        self.url_layout.setSpacing(10)
+
+        # 将页面添加到 stacked widget
+        self.controls.addWidget(self.ctrl_page)
+        self.controls.addWidget(self.url_page)
 
         # 创建亮度控制行
         # 先初始化图标缓存
@@ -192,6 +205,9 @@ class ModernIsland(QWidget):
 
         self.ctrl_layout.addLayout(self.bright_row)
         self.ctrl_layout.addWidget(self.status_bar)
+
+        # 设置 stacked widget 高度
+        self.controls.setFixedHeight(120)
 
         # 添加到主布局
         self.layout.addWidget(self.time_label)
@@ -456,7 +472,8 @@ class ModernIsland(QWidget):
             self.ani.setStartValue(start)
             self.ani.setEndValue(end)
 
-            # 切换显示内容
+            # 切换显示内容 - 先切回控制面板页面
+            self.controls.setCurrentWidget(self.ctrl_page)
             self.controls.hide()
 
             # 动画结束后显示时间并调整容器大小
@@ -558,44 +575,36 @@ class ModernIsland(QWidget):
         self._show_url_notification(urls)
 
     def _show_url_notification(self, urls: list):
-        """显示 URL 通知让用户选择是否打开。"""
+        """显示 URL 通知在灵动岛内部。"""
+        # 清空之前的 URL 页面内容
+        while self.url_layout.count():
+            item = self.url_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
         if len(urls) == 1:
+            # 单个 URL
             url = urls[0]
-            # 不直接显示URL，只显示提示
-            self.show_notification_on_time("检测到链接", "🔗")
-
-            # 延迟后显示选择对话框
-            QTimer.singleShot(1500, lambda: self._show_single_url_dialog(urls[0]))
+            self._build_single_url_page(url)
         else:
-            # 多个 URL，显示选择对话框
-            self._show_url_selection_dialog(urls)
+            # 多个 URL
+            self._build_multi_url_page(urls)
 
-    def _show_single_url_dialog(self, url: str):
-        """显示单个 URL 的选择对话框。"""
-        # 关闭已存在的对话框
-        if self._url_dialog is not None:
-            self._url_dialog.close()
-            self._url_dialog = None
+        # 展开灵动岛并显示链接页面
+        self._expand_to_url_page()
 
-        dialog = QFrame(self)
-        dialog.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
-        dialog.setObjectName("UrlDialog")
-        dialog.setFixedSize(320, 120)
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(10)
-
+    def _build_single_url_page(self, url: str):
+        """构建单个 URL 的页面。"""
         # 标题
         title = QLabel("检测到链接")
         title.setObjectName("DialogTitle")
-        layout.addWidget(title)
+        self.url_layout.addWidget(title)
 
         # URL 显示
-        url_label = QLabel(url[:50] + "..." if len(url) > 50 else url)
+        url_label = QLabel(url[:45] + "..." if len(url) > 45 else url)
         url_label.setObjectName("UrlLabel")
         url_label.setWordWrap(True)
-        layout.addWidget(url_label)
+        self.url_layout.addWidget(url_label)
 
         # 按钮区域
         btn_layout = QHBoxLayout()
@@ -603,40 +612,116 @@ class ModernIsland(QWidget):
 
         cancel_btn = QPushButton("忽略")
         cancel_btn.setObjectName("DialogButton")
-        cancel_btn.clicked.connect(dialog.close)
+        cancel_btn.clicked.connect(self._close_url_page)
 
         open_btn = QPushButton("打开链接")
         open_btn.setObjectName("DialogButton")
-        open_btn.clicked.connect(lambda: self._open_and_close(url, dialog))
+        open_btn.clicked.connect(lambda: self._open_url_and_close(url))
 
         btn_layout.addWidget(cancel_btn)
         btn_layout.addWidget(open_btn)
-        layout.addLayout(btn_layout)
+        self.url_layout.addLayout(btn_layout)
 
-        # 显示在灵动岛下方
-        dialog_pos = self.mapToGlobal(self.rect().bottomLeft())
-        dialog.move(dialog_pos.x() - 50, dialog_pos.y() + 10)
-        dialog.show()
+    def _build_multi_url_page(self, urls: list):
+        """构建多个 URL 的选择页面。"""
+        # 标题
+        title = QLabel(f"检测到 {len(urls)} 个链接")
+        title.setObjectName("DialogTitle")
+        self.url_layout.addWidget(title)
 
-        # 保存对话框引用
-        self._url_dialog = dialog
+        # URL 列表（只显示前3个，超出提示）
+        for i, url in enumerate(urls[:3]):
+            url_text = url[:40] + "..." if len(url) > 40 else url
+            url_label = QLabel(f"{i+1}. {url_text}")
+            url_label.setObjectName("UrlLabel")
+            url_label.setWordWrap(True)
+            self.url_layout.addWidget(url_label)
 
-        # 5秒后自动关闭
-        auto_close_timer = QTimer(self)
-        auto_close_timer.setSingleShot(True)
-        auto_close_timer.timeout.connect(dialog.close)
-        auto_close_timer.start(5000)
+        if len(urls) > 3:
+            more_label = QLabel(f"...还有 {len(urls) - 3} 个链接")
+            more_label.setObjectName("StatusLabel")
+            self.url_layout.addWidget(more_label)
 
-    def _open_and_close(self, url: str, dialog):
-        """打开 URL 并关闭对话框。"""
+        # 按钮区域
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+
+        ignore_btn = QPushButton("忽略")
+        ignore_btn.setObjectName("DialogButton")
+        ignore_btn.clicked.connect(self._close_url_page)
+
+        open_all_btn = QPushButton("全部打开")
+        open_all_btn.setObjectName("DialogButton")
+        open_all_btn.clicked.connect(lambda: self._open_all_and_close(urls))
+
+        btn_layout.addWidget(ignore_btn)
+        btn_layout.addWidget(open_all_btn)
+        self.url_layout.addLayout(btn_layout)
+
+    def _expand_to_url_page(self):
+        """展开灵动岛并显示链接页面。"""
+        # 如果已经展开，直接切换页面
+        if self.is_expanded:
+            self.controls.setCurrentWidget(self.url_page)
+            return
+
+        # 未展开，先展开
+        self._last_expanded_page = "url"  # 记录展开来源
+        self._do_expand_and_show_url()
+
+    def _do_expand_and_show_url(self):
+        """执行展开动画并显示链接页面。"""
+        # 获取当前位置
+        current_pos = self.geometry().topLeft()
+
+        # 展开动画 - 向两边展开
+        self.time_label.hide()
+        self.date_label.show()
+        self.update_time_display()
+
+        self.ani = QPropertyAnimation(self, b"geometry")
+        self.ani.setDuration(200)
+        self.ani.setEasingCurve(QEasingCurve.InOutCubic)
+
+        start = QRect(
+            current_pos.x() + 90, current_pos.y(),
+            0, 40
+        )
+        end = QRect(
+            current_pos.x(), current_pos.y(),
+            360, 160
+        )
+        self.ani.setStartValue(start)
+        self.ani.setEndValue(end)
+
+        # 动画结束后显示链接页面
+        self.ani.finished.connect(lambda: (
+            self.controls.show(),
+            self.controls.setCurrentWidget(self.url_page),
+            self.container.setFixedSize(360, 160)
+        ))
+
+        self.ani.start()
+        self.is_expanded = True
+        self._expanded_page = "url"
+
+    def _close_url_page(self):
+        """关闭链接页面，收起灵动岛。"""
+        # 切换回控制面板页面
+        self.controls.setCurrentWidget(self.ctrl_page)
+        # 收起灵动岛
+        if self.is_expanded:
+            self.toggle_island()
+
+    def _open_url_and_close(self, url: str):
+        """打开 URL 并收起灵动岛。"""
         open_url(url)
-        dialog.close()
+        self._close_url_page()
 
-    def _show_url_selection_dialog(self, urls: list):
-        """显示 URL 选择对话框。"""
-        # 创建对话框
-        dialog = QFrame(self)
-        dialog.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+    def _open_all_and_close(self, urls: list):
+        """打开所有 URL 并收起灵动岛。"""
+        open_urls(urls)
+        self._close_url_page()
         dialog.setObjectName("UrlDialog")
         dialog.setFixedSize(320, min(400, 80 + len(urls) * 50))
 
