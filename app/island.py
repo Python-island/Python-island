@@ -240,6 +240,7 @@ class ModernIsland(QWidget):
 
         # 剪贴板监听相关
         self._last_clipboard_text = ""
+        self._clipboard_first_check = True  # 标记是否是第一次检查
         self._clipboard_timer = QTimer(self)
         self._clipboard_timer.timeout.connect(self._check_clipboard)
         self._clipboard_timer.start(1500)  # 每1.5秒检查一次剪贴板
@@ -567,6 +568,12 @@ class ModernIsland(QWidget):
         """检查剪贴板是否有新的 URL。"""
         current_text = get_clipboard_text()
         if not current_text:
+            return
+
+        # 第一次检查时，只记录当前剪贴板内容，不处理
+        if self._clipboard_first_check:
+            self._last_clipboard_text = current_text
+            self._clipboard_first_check = False
             return
 
         # 提取 URL
