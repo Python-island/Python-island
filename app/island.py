@@ -256,6 +256,7 @@ class ModernIsland(QWidget):
 
         # URL 对话框跟踪
         self._url_dialog = None        # 加载初始值（异步）
+        self._url_checkboxes = {}      # 多URL页面的checkbox对应关系
         self._start_initial_values_load()
         # 初始化亮度值
         self.current_brightness = 50
@@ -665,6 +666,9 @@ class ModernIsland(QWidget):
         # 清空之前的内容（包含 spacer / 子 layout）
         self._clear_layout(self.url_multi_layout)
 
+        # 保存URL和checkbox的对应关系
+        self._url_checkboxes = {}
+
         # 标题
         title = QLabel(f"检测到 {len(urls)} 个链接")
         title.setObjectName("DialogTitle")
@@ -688,14 +692,29 @@ class ModernIsland(QWidget):
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.setSpacing(0)
 
-        # URL 列表
+        # URL 列表（带checkbox）
         for i, url in enumerate(urls[:visible_count]):
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+
+            # 复选框，默认选中
+            checkbox = QCheckBox()
+            checkbox.setChecked(True)
+            checkbox.setFixedWidth(24)
+
             url_text = url[:35] + "..." if len(url) > 35 else url
             url_label = QLabel(f"{i+1}. {url_text}")
             url_label.setObjectName("UrlLabel")
-            url_label.setMinimumHeight(item_height)
             url_label.setAlignment(Qt.AlignVCenter)
-            scroll_layout.addWidget(url_label)
+
+            row_layout.addWidget(checkbox)
+            row_layout.addWidget(url_label)
+            scroll_layout.addWidget(row_widget)
+
+            # 保存对应关系
+            self._url_checkboxes[checkbox] = url
 
         if len(urls) > visible_count:
             more_label = QLabel(f"...还有 {len(urls) - visible_count} 个")
@@ -718,12 +737,12 @@ class ModernIsland(QWidget):
         ignore_btn.setObjectName("DialogButton")
         ignore_btn.clicked.connect(self._close_url_page)
 
-        open_all_btn = QPushButton("全部打开")
-        open_all_btn.setObjectName("DialogButton")
-        open_all_btn.clicked.connect(lambda: self._open_all_and_close(urls))
+        open_selected_btn = QPushButton("打开选中")
+        open_selected_btn.setObjectName("DialogButton")
+        open_selected_btn.clicked.connect(self._open_selected_and_close)
 
         btn_layout.addWidget(ignore_btn)
-        btn_layout.addWidget(open_all_btn)
+        btn_layout.addWidget(open_selected_btn)
         self.url_multi_layout.addLayout(btn_layout)
 
         # 返回目标高度
@@ -845,6 +864,16 @@ class ModernIsland(QWidget):
     def _open_url_and_close(self, url: str):
         """打开 URL 并收起灵动岛。"""
         open_url(url)
+        self._close_url_page()
+
+    def _open_selected_and_close(self):
+        """打开选中的 URL 并收起灵动岛。"""
+        selected_urls = []
+        for checkbox, url in self._url_checkboxes.items():
+            if checkbox.isChecked():
+                selected_urls.append(url)
+        if selected_urls:
+            open_urls(selected_urls)
         self._close_url_page()
 
     def _open_all_and_close(self, urls: list):
