@@ -461,7 +461,7 @@ class ModernIsland(QWidget):
 
             start = self.geometry()
             end = QRect(
-                current_pos.x(), current_pos.y(),
+                current_pos.x() + self.rect().width() / 2 - 180 , current_pos.y(),
                 360, 160
             )
             self.ani.setStartValue(start)
@@ -496,7 +496,7 @@ class ModernIsland(QWidget):
 
             start = self.geometry()
             end = QRect(
-                current_pos.x(), current_pos.y(),
+                current_pos.x() + self.rect().width() / 2 - 90, current_pos.y(),
                 180, 40
             )
             self.ani.setStartValue(start)
@@ -820,25 +820,28 @@ class ModernIsland(QWidget):
         """执行展开动画并显示链接页面。"""
         # 获取当前位置和中心点
         current_pos = self.geometry().topLeft()
-        center_x = current_pos.x() + 90
+        current_w = self.rect().width()
+        current_h = self.rect().height()
+        center_x = current_pos.x() + current_w // 2
 
         # 隐藏时间，显示日期
         self.time_label.hide()
         self.date_label.show()
         self.update_time_display()
 
-        # 创建展开动画
+        # 创建展开动画 - 从中心向两边展开
         self.ani = QPropertyAnimation(self, b"geometry")
         self.ani.setDuration(250)
         self.ani.setEasingCurve(QEasingCurve.OutCubic)
 
-        # 从中心向两边展开
+        # 起始：从中心点，宽度为0，高度为当前高度
         start = QRect(
             center_x, current_pos.y(),
-            0, 40
+            0, current_h
         )
+        # 结束：目标位置居中
         end = QRect(
-            current_pos.x(), current_pos.y(),
+            center_x - 180, current_pos.y(),
             360, target_height
         )
         self.ani.setStartValue(start)
