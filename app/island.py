@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSlider,
     QStackedWidget,
     QVBoxLayout,
@@ -75,6 +76,8 @@ class ModernIsland(QWidget):
         # 状态与尺寸
         self.is_expanded = False
         self.screen_w = QApplication.primaryScreen().size().width()
+        self.screen_h = QApplication.primaryScreen().size().height()
+        self.max_expand_h = self.screen_h // 3  # 最大展开高度为屏幕的1/3
         self.col_rect = QRect((self.screen_w - 180) // 2, 20, 180, 40)
         self.exp_rect = QRect((self.screen_w - 360) // 2, 20, 360, 160)
         self.setGeometry(self.col_rect)
@@ -128,8 +131,8 @@ class ModernIsland(QWidget):
         # 页面2: 多URL提示页面
         self.url_multi_page = QWidget()
         self.url_multi_layout = QVBoxLayout(self.url_multi_page)
-        self.url_multi_layout.setContentsMargins(10, 15, 10, 15)
-        self.url_multi_layout.setSpacing(10)
+        self.url_multi_layout.setContentsMargins(10, 10, 10, 10)
+        self.url_multi_layout.setSpacing(8)
 
         # 将页面添加到 stacked widget
         self.controls.addWidget(self.ctrl_page)
@@ -598,13 +601,21 @@ class ModernIsland(QWidget):
             # 单个 URL - 切换到单URL页面
             self.controls.setCurrentWidget(self.url_single_page)
             self._build_single_url_page(urls[0])
+            target_height = 160
         else:
             # 多个 URL - 切换到多URL页面
             self.controls.setCurrentWidget(self.url_multi_page)
             self._build_multi_url_page(urls)
 
+            # 计算多URL页面的高度 - 简化计算，确保按钮在下方
+            visible_count = min(len(urls), 6)
+            # 标题30 + URL项(28*数量) + 按钮60 + 间距20 + margin上下30
+            target_height = 30 + (visible_count * 28) + 60 + 40
+            # 限制最大高度
+            target_height = min(target_height, self.max_expand_h)
+
         # 展开灵动岛
-        self._expand_to_url_page()
+        self._expand_to_url_page(target_height)
 
         # 5秒后自动关闭
         if hasattr(self, '_url_auto_close_timer') and self._url_auto_close_timer.isActive():
@@ -663,20 +674,38 @@ class ModernIsland(QWidget):
         title.setObjectName("DialogTitle")
         self.url_multi_layout.addWidget(title)
 
-        # URL 列表（只显示前3个，超出提示）
-        for i, url in enumerate(urls[:3]):
-            url_text = url[:40] + "..." if len(url) > 40 else url
+        # 创建滚动区域 - 不设置固定高度，让它自动填充
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setObjectName("UrlScrollArea")
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 5, 0, 5)
+        scroll_layout.setSpacing(3)
+
+        # URL 列表
+        visible_count = min(len(urls), 6)
+        for i, url in enumerate(urls[:visible_count]):
+            url_text = url[:35] + "..." if len(url) > 35 else url
             url_label = QLabel(f"{i+1}. {url_text}")
             url_label.setObjectName("UrlLabel")
             url_label.setWordWrap(True)
-            self.url_multi_layout.addWidget(url_label)
+            url_label.setStyleSheet("padding: 4px 5px;")
+            scroll_layout.addWidget(url_label)
 
-        if len(urls) > 3:
-            more_label = QLabel(f"...还有 {len(urls) - 3} 个链接")
+        if len(urls) > visible_count:
+            more_label = QLabel(f"...还有 {len(urls) - visible_count} 个")
             more_label.setObjectName("StatusLabel")
-            self.url_multi_layout.addWidget(more_label)
+            more_label.setStyleSheet("padding: 4px 5px;")
+            scroll_layout.addWidget(more_label)
 
-        # 按钮区域
+        scroll.setWidget(scroll_content)
+        self.url_multi_layout.addWidget(scroll, 1)  # stretch=1 让scroll自动填充
+
+        # 按钮区域 - 使用固定高度确保不与scroll重叠
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
@@ -690,46 +719,78 @@ class ModernIsland(QWidget):
 
         btn_layout.addWidget(ignore_btn)
         btn_layout.addWidget(open_all_btn)
+
+        # 按钮区域不设置 stretch，保证在底部
         self.url_multi_layout.addLayout(btn_layout)
 
-    def _expand_to_url_page(self):
+    def _expand_to_url_page(self, target_height: int = 160):
         """展开灵动岛。"""
-        # 如果已经展开，直接返回
+        # 如果已经展开，直接切换页面并调整高度
         if self.is_expanded:
+            # 如果高度需要变化，添加一个高度动画
+            current_h = self.geometry().height()
+            if current_h != target_height:
+                self._animate_height_change(current_h, target_height)
             return
 
         # 未展开，先展开
-        self._do_expand_and_show_url()
+        self._do_expand_and_show_url(target_height)
 
-    def _do_expand_and_show_url(self):
+    def _animate_height_change(self, from_h: int, to_h: int):
+        """动态调整高度的动画。"""
+        current_pos = self.pos()
+        current_w = self.geometry().width()
+
+        self.ani = QPropertyAnimation(self, b"geometry")
+        self.ani.setDuration(150)
+        self.ani.setEasingCurve(QEasingCurve.OutCubic)
+
+        start = QRect(current_pos.x(), current_pos.y(), current_w, from_h)
+        end = QRect(current_pos.x(), current_pos.y(), current_w, to_h)
+        self.ani.setStartValue(start)
+        self.ani.setEndValue(end)
+
+        self.ani.finished.connect(lambda: self.container.setFixedSize(current_w, to_h))
+        self.ani.start()
+
+    def _do_expand_and_show_url(self, target_height: int = 160):
         """执行展开动画并显示链接页面。"""
-        # 获取当前位置
+        # 获取当前位置和中心点
         current_pos = self.geometry().topLeft()
+        center_x = current_pos.x() + 90
 
-        # 展开动画 - 向两边展开
+        # 隐藏时间，显示日期
         self.time_label.hide()
         self.date_label.show()
         self.update_time_display()
 
+        # 创建展开动画
         self.ani = QPropertyAnimation(self, b"geometry")
-        self.ani.setDuration(200)
-        self.ani.setEasingCurve(QEasingCurve.InOutCubic)
+        self.ani.setDuration(250)
+        self.ani.setEasingCurve(QEasingCurve.OutCubic)
 
+        # 从中心向两边展开
         start = QRect(
-            current_pos.x() + 90, current_pos.y(),
+            center_x, current_pos.y(),
             0, 40
         )
         end = QRect(
             current_pos.x(), current_pos.y(),
-            360, 160
+            360, target_height
         )
         self.ani.setStartValue(start)
         self.ani.setEndValue(end)
 
-        # 动画结束后显示控制区域
+        # 动画进行中动态调整
+        self.ani.valueChanged.connect(lambda value: (
+            self.controls.show() if value.width() > 50 else None,
+            self.container.setFixedSize(value.width(), 40 + (target_height - 40) * (value.width() / 360))
+        ))
+
+        # 动画结束后确保尺寸正确
         self.ani.finished.connect(lambda: (
             self.controls.show(),
-            self.container.setFixedSize(360, 160)
+            self.container.setFixedSize(360, target_height)
         ))
 
         self.ani.start()
