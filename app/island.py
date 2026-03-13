@@ -22,9 +22,14 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
     QHBoxLayout,
+    QLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSlider,
+    QSpacerItem,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -74,6 +79,10 @@ class ModernIsland(QWidget):
         # 状态与尺寸
         self.is_expanded = False
         self.screen_w = QApplication.primaryScreen().size().width()
+        self.screen_h = QApplication.primaryScreen().size().height()
+        self.max_expand_h = self.screen_h // 3  # 最大展开高度为屏幕的1/3
+        # 多 URL 页面：scroll 与按钮区的垂直间距（按钮下移）
+        self.multi_url_btn_top_spacing = 35
         self.col_rect = QRect((self.screen_w - 180) // 2, 20, 180, 40)
         self.exp_rect = QRect((self.screen_w - 360) // 2, 20, 360, 160)
         self.setGeometry(self.col_rect)
@@ -108,13 +117,32 @@ class ModernIsland(QWidget):
         self.date_label.hide()
         self.date_label.setParent(self.container)
 
-        # 2. 展开态内容：控制组
-        self.controls = QWidget()
+        # 2. 展开态内容：使用 StackedWidget 管理多个页面
+        self.controls = QStackedWidget()
         self.controls.hide()
-        self.controls.setFixedHeight(120)
-        self.ctrl_layout = QVBoxLayout(self.controls)
+
+        # 页面0: 控制面板
+        self.ctrl_page = QWidget()
+        self.ctrl_layout = QVBoxLayout(self.ctrl_page)
         self.ctrl_layout.setContentsMargins(5, 20, 5, 10)
         self.ctrl_layout.setSpacing(15)
+
+        # 页面1: 单URL提示页面
+        self.url_single_page = QWidget()
+        self.url_single_layout = QVBoxLayout(self.url_single_page)
+        self.url_single_layout.setContentsMargins(10, 15, 10, 15)
+        self.url_single_layout.setSpacing(10)
+
+        # 页面2: 多URL提示页面
+        self.url_multi_page = QWidget()
+        self.url_multi_layout = QVBoxLayout(self.url_multi_page)
+        self.url_multi_layout.setContentsMargins(10, 10, 10, 10)
+        self.url_multi_layout.setSpacing(8)
+
+        # 将页面添加到 stacked widget
+        self.controls.addWidget(self.ctrl_page)
+        self.controls.addWidget(self.url_single_page)
+        self.controls.addWidget(self.url_multi_page)
 
         # 创建亮度控制行
         # 先初始化图标缓存
@@ -193,6 +221,10 @@ class ModernIsland(QWidget):
         self.ctrl_layout.addLayout(self.bright_row)
         self.ctrl_layout.addWidget(self.status_bar)
 
+        # 设置 stacked widget 高度
+        # 注意：controls 的高度需要随展开高度动态变化，否则多 URL 页面会被压缩导致按钮与 scroll 重叠
+        self.controls.setFixedHeight(120)
+
         # 添加到主布局
         self.layout.addWidget(self.time_label)
         self.layout.addWidget(self.controls)
@@ -217,12 +249,14 @@ class ModernIsland(QWidget):
 
         # 剪贴板监听相关
         self._last_clipboard_text = ""
+        self._clipboard_first_check = True  # 标记是否是第一次检查
         self._clipboard_timer = QTimer(self)
         self._clipboard_timer.timeout.connect(self._check_clipboard)
         self._clipboard_timer.start(1500)  # 每1.5秒检查一次剪贴板
 
         # URL 对话框跟踪
         self._url_dialog = None        # 加载初始值（异步）
+        self._url_checkboxes = {}      # 多URL页面的checkbox对应关系
         self._start_initial_values_load()
         # 初始化亮度值
         self.current_brightness = 50
@@ -411,6 +445,9 @@ class ModernIsland(QWidget):
         current_pos = self.pos()
 
         if not self.is_expanded:
+            # 立即标记为展开状态，防止重复触发
+            self.is_expanded = True
+
             # 展开动画 - 立即隐藏时间，动画结束后显示日期+时间
             self.time_label.hide()
             self.date_label.hide()
@@ -440,6 +477,9 @@ class ModernIsland(QWidget):
             self.ani.start()
 
         else:
+            # 立即标记为折叠状态
+            self.is_expanded = False
+
             # 折叠动画 - 立即隐藏日期，动画结束后显示时间
             self.date_label.hide()
             self.time_label.hide()
@@ -456,7 +496,8 @@ class ModernIsland(QWidget):
             self.ani.setStartValue(start)
             self.ani.setEndValue(end)
 
-            # 切换显示内容
+            # 切换显示内容 - 先切回控制面板页面
+            self.controls.setCurrentWidget(self.ctrl_page)
             self.controls.hide()
 
             # 动画结束后显示时间并调整容器大小
@@ -467,8 +508,6 @@ class ModernIsland(QWidget):
             ))
 
             self.ani.start()
-
-        self.is_expanded = not self.is_expanded
 
     def update_time(self):
         """更新时间显示。"""
@@ -541,6 +580,12 @@ class ModernIsland(QWidget):
         if not current_text:
             return
 
+        # 第一次检查时，只记录当前剪贴板内容，不处理
+        if self._clipboard_first_check:
+            self._last_clipboard_text = current_text
+            self._clipboard_first_check = False
+            return
+
         # 提取 URL
         urls = extract_urls(current_text)
         if not urls:
@@ -558,44 +603,47 @@ class ModernIsland(QWidget):
         self._show_url_notification(urls)
 
     def _show_url_notification(self, urls: list):
-        """显示 URL 通知让用户选择是否打开。"""
+        """显示 URL 通知在灵动岛内部。"""
         if len(urls) == 1:
-            url = urls[0]
-            # 不直接显示URL，只显示提示
-            self.show_notification_on_time("检测到链接", "🔗")
-
-            # 延迟后显示选择对话框
-            QTimer.singleShot(1500, lambda: self._show_single_url_dialog(urls[0]))
+            # 单个 URL - 切换到单URL页面
+            self.controls.setCurrentWidget(self.url_single_page)
+            self._build_single_url_page(urls[0])
+            target_height = 160
         else:
-            # 多个 URL，显示选择对话框
-            self._show_url_selection_dialog(urls)
+            # 多个 URL - 切换到多URL页面
+            self.controls.setCurrentWidget(self.url_multi_page)
+            # 由页面构建函数返回目标高度（包含 scroll/按钮间距等），避免高度压缩导致间距“看起来不变”
+            target_height = self._build_multi_url_page(urls)
+            # 限制最大高度
+            target_height = min(target_height, self.max_expand_h)
 
-    def _show_single_url_dialog(self, url: str):
-        """显示单个 URL 的选择对话框。"""
-        # 关闭已存在的对话框
-        if self._url_dialog is not None:
-            self._url_dialog.close()
-            self._url_dialog = None
+        # 展开灵动岛
+        self._expand_to_url_page(target_height)
 
-        dialog = QFrame(self)
-        dialog.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
-        dialog.setObjectName("UrlDialog")
-        dialog.setFixedSize(320, 120)
+        # 5秒后自动关闭
+        if hasattr(self, '_url_auto_close_timer') and self._url_auto_close_timer.isActive():
+            self._url_auto_close_timer.stop()
 
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(10)
+        self._url_auto_close_timer = QTimer(self)
+        self._url_auto_close_timer.setSingleShot(True)
+        self._url_auto_close_timer.timeout.connect(self._close_url_page)
+        self._url_auto_close_timer.start(5000)
+
+    def _build_single_url_page(self, url: str):
+        """构建单个 URL 的页面。"""
+        # 清空之前的内容
+        self._clear_layout(self.url_single_layout)
 
         # 标题
         title = QLabel("检测到链接")
         title.setObjectName("DialogTitle")
-        layout.addWidget(title)
+        self.url_single_layout.addWidget(title)
 
         # URL 显示
-        url_label = QLabel(url[:50] + "..." if len(url) > 50 else url)
+        url_label = QLabel(url[:45] + "..." if len(url) > 45 else url)
         url_label.setObjectName("UrlLabel")
         url_label.setWordWrap(True)
-        layout.addWidget(url_label)
+        self.url_single_layout.addWidget(url_label)
 
         # 按钮区域
         btn_layout = QHBoxLayout()
@@ -603,101 +651,235 @@ class ModernIsland(QWidget):
 
         cancel_btn = QPushButton("忽略")
         cancel_btn.setObjectName("DialogButton")
-        cancel_btn.clicked.connect(dialog.close)
+        cancel_btn.clicked.connect(self._close_url_page)
 
         open_btn = QPushButton("打开链接")
         open_btn.setObjectName("DialogButton")
-        open_btn.clicked.connect(lambda: self._open_and_close(url, dialog))
+        open_btn.clicked.connect(lambda: self._open_url_and_close(url))
 
         btn_layout.addWidget(cancel_btn)
         btn_layout.addWidget(open_btn)
-        layout.addLayout(btn_layout)
+        self.url_single_layout.addLayout(btn_layout)
 
-        # 显示在灵动岛下方
-        dialog_pos = self.mapToGlobal(self.rect().bottomLeft())
-        dialog.move(dialog_pos.x() - 50, dialog_pos.y() + 10)
-        dialog.show()
+    def _build_multi_url_page(self, urls: list):
+        """构建多个 URL 的选择页面。"""
+        # 清空之前的内容（包含 spacer / 子 layout）
+        self._clear_layout(self.url_multi_layout)
 
-        # 保存对话框引用
-        self._url_dialog = dialog
-
-        # 5秒后自动关闭
-        auto_close_timer = QTimer(self)
-        auto_close_timer.setSingleShot(True)
-        auto_close_timer.timeout.connect(dialog.close)
-        auto_close_timer.start(5000)
-
-    def _open_and_close(self, url: str, dialog):
-        """打开 URL 并关闭对话框。"""
-        open_url(url)
-        dialog.close()
-
-    def _show_url_selection_dialog(self, urls: list):
-        """显示 URL 选择对话框。"""
-        # 创建对话框
-        dialog = QFrame(self)
-        dialog.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
-        dialog.setObjectName("UrlDialog")
-        dialog.setFixedSize(320, min(400, 80 + len(urls) * 50))
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(10)
+        # 保存URL和checkbox的对应关系
+        self._url_checkboxes = {}
 
         # 标题
         title = QLabel(f"检测到 {len(urls)} 个链接")
         title.setObjectName("DialogTitle")
-        layout.addWidget(title)
+        self.url_multi_layout.addWidget(title)
 
-        # URL 列表
-        self._url_checkboxes = []
-        for url in urls:
-            checkbox = QCheckBox(url[:60] + "..." if len(url) > 60 else url)
+        # 计算高度 - 根据URL数量动态调整
+        visible_count = min(len(urls), 6)
+        item_height = 32  # 每个URL项的高度
+        scroll_height = visible_count * item_height + 10  # scroll区域高度
+
+        # 创建滚动区域 - 设置固定高度
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded if len(urls) > 6 else Qt.ScrollBarAlwaysOff)
+        scroll.setObjectName("UrlScrollArea")
+        scroll.setFixedHeight(scroll_height)
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(0)
+
+        # URL 列表（带checkbox）
+        for i, url in enumerate(urls[:visible_count]):
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+
+            # 复选框，默认选中
+            checkbox = QCheckBox()
             checkbox.setChecked(True)
-            checkbox._url = url
-            self._url_checkboxes.append(checkbox)
-            layout.addWidget(checkbox)
+            checkbox.setFixedWidth(24)
+
+            url_text = url[:35] + "..." if len(url) > 35 else url
+            url_label = QLabel(f"{i+1}. {url_text}")
+            url_label.setObjectName("UrlLabel")
+            url_label.setAlignment(Qt.AlignVCenter)
+
+            row_layout.addWidget(checkbox)
+            row_layout.addWidget(url_label)
+            scroll_layout.addWidget(row_widget)
+
+            # 保存对应关系
+            self._url_checkboxes[checkbox] = url
+
+        if len(urls) > visible_count:
+            more_label = QLabel(f"...还有 {len(urls) - visible_count} 个")
+            more_label.setObjectName("StatusLabel")
+            more_label.setMinimumHeight(item_height)
+            more_label.setAlignment(Qt.AlignVCenter)
+            scroll_layout.addWidget(more_label)
+
+        scroll.setWidget(scroll_content)
+        self.url_multi_layout.addWidget(scroll)
+
+        # scroll 与按钮之间固定间距（按钮下移）
+        self.url_multi_layout.addSpacing(self.multi_url_btn_top_spacing)
 
         # 按钮区域
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
-        cancel_btn = QPushButton("取消")
-        cancel_btn.setObjectName("DialogButton")
-        cancel_btn.clicked.connect(dialog.close)
+        ignore_btn = QPushButton("忽略")
+        ignore_btn.setObjectName("DialogButton")
+        ignore_btn.clicked.connect(self._close_url_page)
 
-        open_btn = QPushButton("打开选中")
-        open_btn.setObjectName("DialogButton")
-        open_btn.clicked.connect(lambda: self._open_selected_urls(dialog))
+        open_selected_btn = QPushButton("打开选中")
+        open_selected_btn.setObjectName("DialogButton")
+        open_selected_btn.clicked.connect(self._open_selected_and_close)
 
-        btn_layout.addWidget(cancel_btn)
-        btn_layout.addWidget(open_btn)
-        layout.addLayout(btn_layout)
+        btn_layout.addWidget(ignore_btn)
+        btn_layout.addWidget(open_selected_btn)
+        self.url_multi_layout.addLayout(btn_layout)
 
-        # 显示在灵动岛下方
-        dialog_pos = self.mapToGlobal(self.rect().bottomLeft())
-        dialog.move(dialog_pos.x() - 50, dialog_pos.y() + 10)
-        dialog.show()
+        # 返回目标高度
+        # 标题30 + scroll高度 + 间距 + 按钮50 + margin
+        target_height = 30 + scroll_height + self.multi_url_btn_top_spacing + 50 + 20
+        return target_height
 
-        # 保存对话框引用
-        self._url_dialog = dialog
+    def _clear_layout(self, layout: QLayout):
+        """递归清空 layout，确保 spacer/layout 也被移除。"""
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+                continue
+            if item.layout():
+                self._clear_layout(item.layout())
+                continue
 
-        # 5秒后自动关闭
-        auto_close_timer = QTimer(self)
-        auto_close_timer.setSingleShot(True)
-        auto_close_timer.timeout.connect(dialog.close)
-        auto_close_timer.start(5000)
+    def _expand_to_url_page(self, target_height: int = 160):
+        """展开灵动岛。"""
+        # 如果已经展开，直接切换页面并调整高度
+        if self.is_expanded:
+            # 如果高度需要变化，添加一个高度动画
+            current_h = self.geometry().height()
+            if current_h != target_height:
+                self._animate_height_change(current_h, target_height)
+            return
 
-    def _open_selected_urls(self, dialog):
-        """打开选中的 URL。"""
-        for checkbox in self._url_checkboxes:
+        # 未展开，先展开
+        self._do_expand_and_show_url(target_height)
+
+    def _animate_height_change(self, from_h: int, to_h: int):
+        """动态调整高度的动画。"""
+        current_pos = self.pos()
+        current_w = self.geometry().width()
+
+        self.ani = QPropertyAnimation(self, b"geometry")
+        self.ani.setDuration(150)
+        self.ani.setEasingCurve(QEasingCurve.OutCubic)
+
+        start = QRect(current_pos.x(), current_pos.y(), current_w, from_h)
+        end = QRect(current_pos.x(), current_pos.y(), current_w, to_h)
+        self.ani.setStartValue(start)
+        self.ani.setEndValue(end)
+
+        # 动画进行中同步更新容器与 controls 高度
+        self.ani.valueChanged.connect(lambda value: (
+            self.container.setFixedSize(current_w, value.height()),
+            self._set_controls_height(value.height())
+        ))
+
+        self.ani.finished.connect(lambda: (
+            self.container.setFixedSize(current_w, to_h),
+            self._set_controls_height(to_h)
+        ))
+        self.ani.start()
+
+    def _set_controls_height(self, container_h: int):
+        """根据容器高度同步设置 controls 高度（避免内容被压缩）。"""
+        # 40px 为顶部时间/日期区域高度
+        controls_h = max(0, int(container_h) - 40)
+        self.controls.setFixedHeight(controls_h)
+
+    def _do_expand_and_show_url(self, target_height: int = 160):
+        """执行展开动画并显示链接页面。"""
+        # 获取当前位置和中心点
+        current_pos = self.geometry().topLeft()
+        center_x = current_pos.x() + 90
+
+        # 隐藏时间，显示日期
+        self.time_label.hide()
+        self.date_label.show()
+        self.update_time_display()
+
+        # 创建展开动画
+        self.ani = QPropertyAnimation(self, b"geometry")
+        self.ani.setDuration(250)
+        self.ani.setEasingCurve(QEasingCurve.OutCubic)
+
+        # 从中心向两边展开
+        start = QRect(
+            center_x, current_pos.y(),
+            0, 40
+        )
+        end = QRect(
+            current_pos.x(), current_pos.y(),
+            360, target_height
+        )
+        self.ani.setStartValue(start)
+        self.ani.setEndValue(end)
+
+        # 动画进行中动态调整
+        self.ani.valueChanged.connect(lambda value: (
+            self.controls.show() if value.width() > 50 else None,
+            self.container.setFixedSize(value.width(), 40 + (target_height - 40) * (value.width() / 360)),
+            self._set_controls_height(40 + (target_height - 40) * (value.width() / 360))
+        ))
+
+        # 动画结束后确保尺寸正确
+        self.ani.finished.connect(lambda: (
+            self.controls.show(),
+            self.container.setFixedSize(360, target_height),
+            self._set_controls_height(target_height)
+        ))
+
+        self.ani.start()
+        self.is_expanded = True
+
+    def _close_url_page(self):
+        """关闭链接页面，收起灵动岛。"""
+        # 切换回控制面板页面
+        self.controls.setCurrentWidget(self.ctrl_page)
+        # 重置 controls 高度为控制面板的默认高度
+        self.controls.setFixedHeight(120)
+        # 收起灵动岛
+        if self.is_expanded:
+            self.toggle_island()
+
+    def _open_url_and_close(self, url: str):
+        """打开 URL 并收起灵动岛。"""
+        open_url(url)
+        self._close_url_page()
+
+    def _open_selected_and_close(self):
+        """打开选中的 URL 并收起灵动岛。"""
+        selected_urls = []
+        for checkbox, url in self._url_checkboxes.items():
             if checkbox.isChecked():
-                open_url(checkbox._url)
-        dialog.close()
+                selected_urls.append(url)
+        if selected_urls:
+            open_urls(selected_urls)
+        self._close_url_page()
 
-    def _open_all_urls(self, urls: list):
-        """打开所有 URL。"""
+    def _open_all_and_close(self, urls: list):
+        """打开所有 URL 并收起灵动岛。"""
         open_urls(urls)
+        self._close_url_page()
 
     def load_qss(self):
         """加载QSS样式表。"""
