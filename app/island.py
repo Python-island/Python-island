@@ -16,7 +16,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QPainter, QRegion, QPainterPath
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -263,6 +263,9 @@ class ModernIsland(QWidget):
 
         self.load_qss()
 
+        # 初始化圆角遮罩
+        self._update_rounded_mask()
+
     def _preload_icons(self):
         """预加载图标以提高性能。"""
         icon_files = ["resources/icons/light.png", "resources/icons/volume.png",
@@ -464,6 +467,9 @@ class ModernIsland(QWidget):
             self.ani.setStartValue(start)
             self.ani.setEndValue(end)
 
+            # 动画过程中更新圆角遮罩
+            self.ani.valueChanged.connect(self._update_rounded_mask)
+
             # 动画结束后显示日期+时间（居中显示）
             self.ani.finished.connect(lambda: (
                 self.date_label.show(),
@@ -495,6 +501,9 @@ class ModernIsland(QWidget):
             )
             self.ani.setStartValue(start)
             self.ani.setEndValue(end)
+
+            # 动画过程中更新圆角遮罩
+            self.ani.valueChanged.connect(self._update_rounded_mask)
 
             # 切换显示内容 - 先切回控制面板页面
             self.controls.setCurrentWidget(self.ctrl_page)
@@ -788,10 +797,11 @@ class ModernIsland(QWidget):
         self.ani.setStartValue(start)
         self.ani.setEndValue(end)
 
-        # 动画进行中同步更新容器与 controls 高度
+        # 动画进行中同步更新容器与 controls 高度和圆角遮罩
         self.ani.valueChanged.connect(lambda value: (
             self.container.setFixedSize(current_w, value.height()),
-            self._set_controls_height(value.height())
+            self._set_controls_height(value.height()),
+            self._update_rounded_mask()
         ))
 
         self.ani.finished.connect(lambda: (
@@ -834,11 +844,12 @@ class ModernIsland(QWidget):
         self.ani.setStartValue(start)
         self.ani.setEndValue(end)
 
-        # 动画进行中动态调整
+        # 动画进行中动态调整和圆角遮罩
         self.ani.valueChanged.connect(lambda value: (
             self.controls.show() if value.width() > 50 else None,
             self.container.setFixedSize(value.width(), 40 + (target_height - 40) * (value.width() / 360)),
-            self._set_controls_height(40 + (target_height - 40) * (value.width() / 360))
+            self._set_controls_height(40 + (target_height - 40) * (value.width() / 360)),
+            self._update_rounded_mask()
         ))
 
         # 动画结束后确保尺寸正确
@@ -885,3 +896,13 @@ class ModernIsland(QWidget):
         """加载QSS样式表。"""
         with open("resources/styles/style.qss", "r", encoding="utf-8") as f:
             self.setStyleSheet(f.read())
+
+    def _update_rounded_mask(self):
+        """动态更新窗口的圆角遮罩，保持圆角效果。"""
+        rect = self.rect()
+        radius = min(rect.width(), rect.height()) // 2
+        radius = max(10, min(radius, 20))
+        path = QPainterPath()
+        path.addRoundedRect(rect, radius, radius)
+        region = QRegion(path.toFillPolygon().toPolygon())
+        self.setMask(region)
