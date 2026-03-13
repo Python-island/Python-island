@@ -722,67 +722,6 @@ class ModernIsland(QWidget):
         """打开所有 URL 并收起灵动岛。"""
         open_urls(urls)
         self._close_url_page()
-        dialog.setObjectName("UrlDialog")
-        dialog.setFixedSize(320, min(400, 80 + len(urls) * 50))
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(10)
-
-        # 标题
-        title = QLabel(f"检测到 {len(urls)} 个链接")
-        title.setObjectName("DialogTitle")
-        layout.addWidget(title)
-
-        # URL 列表
-        self._url_checkboxes = []
-        for url in urls:
-            checkbox = QCheckBox(url[:60] + "..." if len(url) > 60 else url)
-            checkbox.setChecked(True)
-            checkbox._url = url
-            self._url_checkboxes.append(checkbox)
-            layout.addWidget(checkbox)
-
-        # 按钮区域
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(10)
-
-        cancel_btn = QPushButton("取消")
-        cancel_btn.setObjectName("DialogButton")
-        cancel_btn.clicked.connect(dialog.close)
-
-        open_btn = QPushButton("打开选中")
-        open_btn.setObjectName("DialogButton")
-        open_btn.clicked.connect(lambda: self._open_selected_urls(dialog))
-
-        btn_layout.addWidget(cancel_btn)
-        btn_layout.addWidget(open_btn)
-        layout.addLayout(btn_layout)
-
-        # 显示在灵动岛下方
-        dialog_pos = self.mapToGlobal(self.rect().bottomLeft())
-        dialog.move(dialog_pos.x() - 50, dialog_pos.y() + 10)
-        dialog.show()
-
-        # 保存对话框引用
-        self._url_dialog = dialog
-
-        # 5秒后自动关闭
-        auto_close_timer = QTimer(self)
-        auto_close_timer.setSingleShot(True)
-        auto_close_timer.timeout.connect(dialog.close)
-        auto_close_timer.start(5000)
-
-    def _open_selected_urls(self, dialog):
-        """打开选中的 URL。"""
-        for checkbox in self._url_checkboxes:
-            if checkbox.isChecked():
-                open_url(checkbox._url)
-        dialog.close()
-
-    def _open_all_urls(self, urls: list):
-        """打开所有 URL。"""
-        open_urls(urls)
 
     def load_qss(self):
         """加载QSS样式表。"""
