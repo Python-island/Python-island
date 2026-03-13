@@ -836,6 +836,8 @@ class ModernIsland(QWidget):
         """关闭链接页面，收起灵动岛。"""
         # 切换回控制面板页面
         self.controls.setCurrentWidget(self.ctrl_page)
+        # 重置 controls 高度为控制面板的默认高度
+        self.controls.setFixedHeight(120)
         # 收起灵动岛
         if self.is_expanded:
             self.toggle_island()
