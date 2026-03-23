@@ -2,10 +2,12 @@
 
 实现灵动岛的主窗口，整合各个功能模块，提供完整的用户界面。
 """
-
+from app.core.workshop import WorkshopManager
+from app.ui.workshop_ui import WorkshopUI
 from PySide6.QtCore import QEvent, QPropertyAnimation, QRect, QEasingCurve, Qt, QTimer
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtCore import Qt
 
 from app.animations.effects import AnimationManager, RoundedMaskHelper
 from app.core.animation_controller import AnimationController
@@ -51,6 +53,8 @@ class ModernIsland(QWidget):
         self._init_timers()
         self._load_styles()
         self._register_state_callbacks()
+        self.workshop_manager = WorkshopManager(self)
+        self.workshop_ui = None
 
     def _init_managers(self):
         self.state_manager = IslandStateManager()
@@ -660,3 +664,34 @@ class ModernIsland(QWidget):
             self._url_dialog = None
             return True
         return super().eventFilter(obj, event)
+    
+    def mousePressEvent(self, event):
+        self._start_drag_idle_timer()
+        
+        # 1. 保留原生逻辑：左键负责拖拽与解除吸附
+        if event.button() == Qt.LeftButton:
+            if self._is_docked:
+                self._is_docked = False
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPos()
+            self._window_start_pos = self.frameGeometry().topLeft()
+            
+        # 2. 注入高维法则：中键（滚轮点击）专门唤醒创意工坊
+        elif event.button() == Qt.MiddleButton:
+            self.toggle_workshop()
+            
+        # 3. 保留原生逻辑：其他按键（或左键快速点击后在 release 中触发的逻辑）交由 event_handler 处理
+        else:
+            self.event_handler.handle_mouse_press(
+                event, self.frameGeometry().topLeft
+            )
+    
+    def toggle_workshop(self):
+        """工坊界面的显隐逻辑"""
+        if self.workshop_ui and self.workshop_ui.isVisible():
+            self.workshop_ui.hide()
+        else:
+            if not self.workshop_ui:
+                self.workshop_ui = WorkshopUI(self.workshop_manager)
+            # 传递当前岛屿的几何位置以计算动画起点
+            self.workshop_ui.show_animated(self.geometry())
