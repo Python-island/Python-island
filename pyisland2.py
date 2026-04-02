@@ -197,7 +197,7 @@ class IslandWindow(QMainWindow):
         # 尺寸配置
         self.fixed_width = 300
         self.height_small = 45
-        self.height_large = 110
+        self.height_large = 140
         self.is_expanded = False
         self.last_status = None
 
@@ -341,18 +341,19 @@ class IslandWindow(QMainWindow):
             self.setGeometry(target_rect)
 
     def enterEvent(self, event):
-        # 即使开启穿透，仍然执行展开动画
+        # 执行悬停展开
         self.is_expanded = True
         self.update_geometry(self.height_large)
-        self.web_view.page().runJavaScript("setWebState(true);")
+        # 延迟执行 JavaScript，确保动画流畅
+        QTimer.singleShot(50, lambda: self.web_view.page().runJavaScript("setWebState(true);"))
         # 确保事件被正确处理
         super().enterEvent(event)
 
-    def leaveEvent(self, event):
-        # 即使开启穿透，仍然执行收起动画
+    def focusOutEvent(self, event):
+        # 失去焦点时收起
         self.reset_animation()
         # 确保事件被正确处理
-        super().leaveEvent(event)
+        super().focusOutEvent(event)
 
     def reset_animation(self):
         if self.is_expanded:
@@ -364,6 +365,8 @@ class IslandWindow(QMainWindow):
 
     def deep_clean_engine(self):
         self.web_view.page().runJavaScript("if(window.gc) { window.gc(); }")
+
+
 
     def apply_native_window_fixes(self):
         if sys.platform != "win32":

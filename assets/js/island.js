@@ -4,8 +4,12 @@ function updateTime(t) {
     document.getElementById('time').textContent = t;
 }
 
-function setWebState(isExp) {
-    document.getElementById('island').classList.toggle('active', isExp);
+function setWebState(state) {
+    const island = document.getElementById('island');
+    island.classList.remove('active', 'clicked');
+    if (state === true) {
+        island.classList.add('active');
+    }
 }
 
 function updateSystemStatus(data) {
@@ -89,3 +93,26 @@ function bindIconClicks() {
     document.getElementById('battery-wrapper').addEventListener('click', () => open('battery'));
     document.getElementById('notice-wrapper').addEventListener('click', () => open('notifications'));
 }
+
+// 添加点击展开功能
+document.addEventListener('DOMContentLoaded', function() {
+    const island = document.getElementById('island');
+    let isClickedExpanded = false;
+    
+    island.addEventListener('click', function(e) {
+        // 检查点击目标是否是按钮，如果是则不执行展开/收起
+        if (e.target.closest('.icon-wrapper')) {
+            return;
+        }
+        
+        isClickedExpanded = !isClickedExpanded;
+        if (isClickedExpanded) {
+            // 点击展开
+            island.classList.remove('active');
+            island.classList.add('clicked');
+        } else {
+            // 点击收起
+            island.classList.remove('active', 'clicked');
+        }
+    });
+});
