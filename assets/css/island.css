@@ -40,6 +40,16 @@ body, html {
     width: 300px;
 }
 
+.island.clicked {
+    height: 130px;
+    width: 300px;
+}
+
+.island.clicked {
+    height: 130px;
+    width: 300px;
+}
+
 .time-container {
     width: 100%;
     min-height: var(--collapsed-height);
@@ -100,6 +110,7 @@ body, html {
 .status-red .icon-bg { background-color: #F44336; }
 .status-off .icon-bg { background-color: rgba(255, 255, 255, 0.1); }
 
+/* 展开页面写在这！ */
 .extra-content {
     width: 100%;
     display: flex;
