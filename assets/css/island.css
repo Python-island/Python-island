@@ -1,13 +1,21 @@
 :root {
-    --bg-color: rgba(10, 10, 10, 0.5);
+    --bg-color: rgba(10, 10, 10, 0.92);
     --accent-color: rgba(255, 255, 255, 0.9);
     --sub-color: rgba(255, 255, 255, 0.4);
-    --collapsed-height: 36px;
+    --dwidth: 300px;
+    --dheight: 36px;
+    --ewidth: 300px;
+    --eheight: 100px;
+    --cwidth: 330px;
+    --cheight: 130px;
 }
-
+/* 基础布局 */
 body, html {
-    margin: 0; padding: 0;
-    width: 100%; height: 100%;
+    opacity: 0.9;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
     background: transparent;
     display: flex;
     justify-content: center;
@@ -17,50 +25,42 @@ body, html {
     -webkit-user-select: none;
     cursor: default;
 }
-
 .island {
     background: var(--bg-color);
-    /*backdrop-filter: blur(25px);*/
-    /*-webkit-backdrop-filter: blur(25px);*/
-    border: 0.5px solid rgba(255, 255, 255, 0);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+
     border-radius: 20px;
     color: white;
     display: flex;
     flex-direction: column;
     align-items: center;
-    width: 300px;
-    height: var(--collapsed-height);
-    margin-top: 5px;
-    transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+    width: var(--dwidth);
+    height: var(--dheight);
     overflow: hidden;
+    transition:
+        width 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+        height 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
-
-.island.active {
-    height: 100px;
-    width: 300px;
+.island:hover {
+    width: var(--ewidth);
+    height: var(--eheight);
 }
-
 .island.clicked {
-    height: 130px;
-    width: 300px;
+    width: var(--cwidth);
+    height: var(--cheight);
 }
 
-.island.clicked {
-    height: 130px;
-    width: 300px;
-}
 
 .time-container {
     width: 100%;
-    min-height: var(--collapsed-height);
-    height: var(--collapsed-height);
+    height: var(--dheight);
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
     position: relative;
 }
-
 #time {
     font-size: 15px;
     font-weight: 600;
@@ -76,10 +76,8 @@ body, html {
     align-items: center;
     gap: 20px;
 }
-
 .icon-container.left { left: 18px; }
 .icon-container.right { right: 18px; }
-
 .icon-wrapper {
     position: relative;
     display: flex;
@@ -87,16 +85,15 @@ body, html {
     justify-content: center;
     cursor: pointer;
 }
-
 .icon-bg {
     position: absolute;
     width: 22px;
     height: 22px;
     border-radius: 50%;
     opacity: 0.25;
-    transition: background-color 0.5s ease, box-shadow 0.5s ease;
-}
 
+    transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
 .icon {
     position: relative;
     z-index: 1;
@@ -105,12 +102,14 @@ body, html {
     opacity: 0.7;
 }
 
-.status-green .icon-bg { background-color: #4CAF50; box-shadow: 0 0 8px rgba(76, 175, 80, 0.3); }
+.status-green .icon-bg {
+    background-color: #4CAF50;
+    box-shadow: 0 0 6px rgba(76, 175, 80, 0.3);
+}
 .status-yellow .icon-bg { background-color: #FFC107; }
 .status-red .icon-bg { background-color: #F44336; }
 .status-off .icon-bg { background-color: rgba(255, 255, 255, 0.1); }
 
-/* 展开页面写在这！ */
 .extra-content {
     width: 100%;
     display: flex;
@@ -120,14 +119,12 @@ body, html {
     padding-top: 5px;
     opacity: 0;
     transform: scale(0.95);
-    transition: all 0.3s ease;
+    transition: transform 0.25s ease, opacity 0.25s ease;
 }
-
 .active .extra-content {
     opacity: 1;
     transform: scale(1);
 }
-
 #status-info {
     font-size: 11px;
     color: var(--sub-color);
@@ -135,15 +132,16 @@ body, html {
     letter-spacing: 0.3px;
     margin-top: 2px;
 }
+.highlight {
+    color: var(--accent-color);
+    font-weight: 500;
+}
 
-.highlight { color: var(--accent-color); font-weight: 500; }
-
-/* Notification - displayed below the island */
 .notification {
     position: absolute;
     top: 100%;
     left: 50%;
-    transform: translateX(-50%);
+    transform: translateX(-50%) translateY(-5px);
     margin-top: 10px;
     background: rgba(255, 255, 255, 0.95);
     color: #333;
@@ -153,13 +151,12 @@ body, html {
     font-family: "Segoe UI", sans-serif;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     opacity: 0;
-    transition: all 0.3s ease;
+    transition: transform 0.25s ease, opacity 0.25s ease;
     z-index: 1000;
     min-width: 200px;
     text-align: center;
     pointer-events: none;
 }
-
 .notification.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);

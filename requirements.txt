@@ -1,9 +1,6 @@
 pyautogui==0.9.54
-pyside6==6.10.2
 pyside6==6.11.0
-pyside6_addons==6.10.2
 pyside6_addons==6.11.0
-pyside6_essentials==6.10.2
 pyside6_essentials==6.11.0
 win10toast==0.9
 win11toast==0.36.3

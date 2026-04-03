@@ -84,6 +84,31 @@ class StatusWorker(QThread):
 
 class PyIslandBridge(QObject):
     """JavaScript桥接对象，用于前端调用后端方法"""
+    resizeSignal = Signal(int, int)
+    @Slot(bool)
+    def enableMousePassthrough(self, enabled=True):
+        print("开启穿透" if enabled else "关闭穿透")
+        window = QApplication.activeWindow()
+        if not window:
+            return
+        if hasattr(window, "set_mouse_penetration"):
+            window.set_mouse_penetration(enabled)
+            return
+        flags = window.windowFlags()
+        if enabled:
+            flags |= Qt.WindowTransparentForInput
+        else:
+            flags &= ~Qt.WindowTransparentForInput
+        window.setWindowFlags(flags)
+        window.show()
+
+    @Slot(int,int)
+    def resizeIsland(self,w,h):
+        self.resizeSignal.emit(w,h)
+
+    @Slot(bool)
+    def collapseWindow(self):
+        print("收起窗口")
 
     @Slot(str)
     def openWindowsSettings(self, setting_type):
@@ -167,6 +192,7 @@ class IslandWindow(QMainWindow):
         self.setWindowFlags(self.base_flags)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setStyleSheet("background: transparent;")
         self.setContentsMargins(0, 0, 0, 0)
 
@@ -188,6 +214,7 @@ class IslandWindow(QMainWindow):
         self.channel = QWebChannel()
         self.channel.registerObject('pyisland', self.bridge)
         self.web_view.page().setWebChannel(self.channel)
+        self.bridge.resizeSignal.connect(lambda w, h: self.setFixedSize(w, h))
 
         self.setCentralWidget(self.web_view)
         self.web_view.setAttribute(Qt.WA_TranslucentBackground)
@@ -231,7 +258,7 @@ class IslandWindow(QMainWindow):
 
         QApplication.instance().aboutToQuit.connect(self.cleanup)
 
-        self.update_geometry(self.height_small, animate=False)
+        self.update_geometry(self.height_large, animate=False)
         QTimer.singleShot(0, self.apply_native_window_fixes)
 
         # 发送启动通知
@@ -299,7 +326,6 @@ class IslandWindow(QMainWindow):
             if self.last_status.get('wifi') != data.get('wifi'):
                 msg = '已连接到互联网' if data.get('wifi') == 'online' else '网络连接已断开'
                 self.show_notification('网络连接', msg)
-                self.trigger_hover_animation()
 
             curr_bt = data.get('bluetooth', {})
             last_bt = self.last_status.get('bluetooth', {})
@@ -308,7 +334,6 @@ class IslandWindow(QMainWindow):
                     devs = curr_bt.get('devices')
                     msg = f'已连接到: {devs[0]}' if len(devs) == 1 else f'已连接 {len(devs)} 个设备'
                     self.show_notification('蓝牙', msg)
-                    self.trigger_hover_animation()
 
         self.last_status = data
         json_str = json.dumps(data)
@@ -316,14 +341,6 @@ class IslandWindow(QMainWindow):
 
     def show_notification(self, title, message):
         self.web_view.page().runJavaScript(f"showNotification('{title}', '{message}');")
-
-    def trigger_hover_animation(self):
-        # 即使开启穿透，仍然自动触发展开动画
-        if not self.is_expanded:
-            self.is_expanded = True
-            self.update_geometry(self.height_large)
-            self.web_view.page().runJavaScript("setWebState(true);")
-            QTimer.singleShot(3000, self.reset_animation)
 
     def refresh_time(self):
         t = time.strftime("%H:%M:%S")
@@ -340,14 +357,6 @@ class IslandWindow(QMainWindow):
         else:
             self.setGeometry(target_rect)
 
-    def enterEvent(self, event):
-        # 执行悬停展开
-        self.is_expanded = True
-        self.update_geometry(self.height_large)
-        # 延迟执行 JavaScript，确保动画流畅
-        QTimer.singleShot(50, lambda: self.web_view.page().runJavaScript("setWebState(true);"))
-        # 确保事件被正确处理
-        super().enterEvent(event)
 
     def focusOutEvent(self, event):
         # 失去焦点时收起
@@ -359,7 +368,6 @@ class IslandWindow(QMainWindow):
         if self.is_expanded:
             self.is_expanded = False
             self.update_geometry(self.height_small)
-            self.web_view.page().runJavaScript("setWebState(false);")
             gc.collect()
             QTimer.singleShot(500, self.deep_clean_engine)
 

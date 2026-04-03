@@ -1,17 +1,13 @@
 /* ─── Public API (called by Python via QWebChannel) ─────────────────────── */
-
+const island = document.getElementById('island');
+let isClickedExpanded = false;
+let isHover = false;
+let timer = null;
 function updateTime(t) {
     document.getElementById('time').textContent = t;
 }
 
-function setWebState(state) {
-    const island = document.getElementById('island');
-    island.classList.remove('active', 'clicked');
-    if (state === true) {
-        island.classList.add('active');
-    }
-}
-
+var lastHtml = null;
 function updateSystemStatus(data) {
     document.getElementById('wifi-wrapper').className =
         'icon-wrapper ' + (data.wifi === 'online' ? 'status-green' : 'status-off');
@@ -39,8 +35,7 @@ function updateSystemStatus(data) {
 
     const batStr = `电池 ${batLevel}%`;
 
-    document.getElementById('status-info').innerHTML =
-        `<div style="display:flex;align-items:center;gap:15px;">
+    let newHtml = `<div style="display:flex;align-items:center;gap:15px;">
             <div style="display:flex;align-items:center;gap:8px;">
                 <img src="public/image/wifi.png" class="icon" style="width:14px;height:14px;opacity:0.7;" />
                 <span class="highlight">${wifiStr}</span>
@@ -54,6 +49,23 @@ function updateSystemStatus(data) {
                 <span class="highlight">${batStr}</span>
             </div>
          </div>`;
+    
+    if(lastHtml!=newHtml && lastHtml != null){
+        if(!isClickedExpanded){
+            island.classList.add('active');
+        }
+        isHover = true;
+        if (timer) clearTimeout(timer);
+    
+        timer = setTimeout(() => {
+            island.classList.remove('active');
+            isHover = false;
+        }, 1000);
+    }
+    lastHtml = newHtml;
+    document.getElementById('status-info').innerHTML = newHtml;
+        
+    
 }
 
 function showNotification(title, message) {
@@ -72,11 +84,25 @@ function showNotification(title, message) {
 /* ─── Internal bridge ───────────────────────────────────────────────────── */
 
 var pyisland; // exposed to Python
-
 document.addEventListener('DOMContentLoaded', function() {
     new QWebChannel(qt.webChannelTransport, function(channel) {
         pyisland = channel.objects.pyisland;
         bindIconClicks();
+        island.addEventListener('mouseenter', () => {
+            if (timer) clearTimeout(timer);
+            if(!isClickedExpanded){
+                island.classList.add('active')
+            }
+            isHover = true;
+            pyisland.resizeIsland
+            
+
+        });
+        
+        island.addEventListener('mouseleave', () => {
+            island.classList.remove('active');
+            isHover = false;
+        });
     });
 });
 
@@ -97,7 +123,7 @@ function bindIconClicks() {
 // 添加点击展开功能
 document.addEventListener('DOMContentLoaded', function() {
     const island = document.getElementById('island');
-    let isClickedExpanded = false;
+    
     
     island.addEventListener('click', function(e) {
         // 检查点击目标是否是按钮，如果是则不执行展开/收起
@@ -111,8 +137,14 @@ document.addEventListener('DOMContentLoaded', function() {
             island.classList.remove('active');
             island.classList.add('clicked');
         } else {
-            // 点击收起
-            island.classList.remove('active', 'clicked');
+            if(isHover){
+                island.classList.remove('clicked');
+                island.classList.add('active');
+            }else{
+                island.classList.remove('active', 'clicked');
+            }
+            
         }
     });
 });
+
