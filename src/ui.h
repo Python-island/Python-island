@@ -1,11 +1,12 @@
 #pragma once
 
-// 绘制灵动岛主界面
-// 返回 true 表示进入了全屏覆盖模式
-void DrawIslandUI(bool isDesktop, bool isFullscreen, bool isMouseOver, float animationY, float deltaTime);
+// Draw DynamicIsland main UI
+void DrawIslandUI(bool isMouseOver, bool isFullscreen, float animationY, float deltaTime);
 
-// 绘制设置窗口
+// Draw settings window
 void DrawSettingsWindow();
 
-// 检查鼠标是否悬停在灵动岛区域
+// Check if mouse is over island (Windows only — Linux uses GLFW_HOVERED)
+#ifdef _WIN32
 bool IsMouseOverIsland();
+#endif

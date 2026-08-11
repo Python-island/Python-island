@@ -1,3 +1,7 @@
+// ===================================================================
+// ui.cpp — Cross-platform ImGui UI rendering
+// ===================================================================
+
 #include "ui.h"
 #include "window.h"
 #include "logging.h"
@@ -6,546 +10,378 @@
 #include "trayicon.h"
 
 #include "imgui.h"
+#ifdef _WIN32
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
-
 #include <dwmapi.h>
-#include <d3d11.h>
-#include <stdio.h>
+#else
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+#include <GLFW/glfw3.h>
+#endif
+
+#include <ctime>
+#include <cstdio>
+#include <algorithm>
 
 #if USE_FILE_TRANSFER
 #include "transferstation.h"
-
-// 文件预览相关
-static size_t g_selectedFileIndex = -1;
-static bool g_showPreview = false;
+static int g_selectedFile = -1;
 #endif
 
-// 创建文件拖放数据对象 (在 window.cpp 中实现，这里 extern 声明)
-HRESULT CreateFileDropDataObject(const std::vector<std::wstring>& filePaths, IDataObject** ppDataObject);
-
-// 文件大小格式化辅助函数
+// === Helpers ===
 static std::string FormatFileSize(uint64_t size) {
-    if (size < 1024) {
-        return std::to_string(size) + " B";
-    } else if (size < 1024 * 1024) {
-        return std::to_string((int)(size / 1024)) + " KB";
-    } else if (size < 1024 * 1024 * 1024) {
-        char buf[32];
-        sprintf(buf, "%.1f MB", (float)size / (1024 * 1024));
-        return buf;
-    } else {
-        char buf[32];
-        sprintf(buf, "%.2f GB", (float)size / (1024 * 1024 * 1024));
-        return buf;
+    if (size < 1024) return std::to_string(size) + " B";
+    if (size < 1024*1024) return std::to_string((int)(size/1024)) + " KB";
+    if (size < 1024LL*1024*1024) {
+        char b[32]; snprintf(b, sizeof(b), "%.1f MB", (float)size/(1024*1024)); return b;
     }
+    char b[32]; snprintf(b, sizeof(b), "%.2f GB", (float)size/(1024.0*1024*1024)); return b;
 }
 
-// === 检查鼠标是否悬停在灵动岛区域 ===
+#ifdef _WIN32
+static int GetScreenWidth() { return GetSystemMetrics(SM_CXSCREEN); }
+static int GetScreenHeight() { return GetSystemMetrics(SM_CYSCREEN); }
+#else
+static int GetScreenWidth() {
+    const GLFWvidmode* m = glfwGetVideoMode(glfwGetPrimaryMonitor());
+    return m ? m->width : 1920;
+}
+static int GetScreenHeight() {
+    const GLFWvidmode* m = glfwGetVideoMode(glfwGetPrimaryMonitor());
+    return m ? m->height : 1080;
+}
+#endif
+
+// === IsMouseOverIsland (Windows only) ===
+#ifdef _WIN32
 bool IsMouseOverIsland() {
     if (!g_islandVisible) return false;
-
-    ImVec2 size = g_islandExpanded ? ImVec2(600.0f, 300.0f) : ImVec2(400.0f, 80.0f);
-    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-    ImVec2 pos;
-    pos.x = (screenWidth - size.x) * 0.5f;
-    pos.y = 20.0f; // 默认位置
-
-    POINT mousePos;
-    GetCursorPos(&mousePos);
-
-    RECT islandRect;
-    islandRect.left = (int)pos.x;
-    islandRect.top = 0;
-    islandRect.right = (int)(pos.x + size.x);
-    islandRect.bottom = (int)(size.y + 30);
-
-    return PtInRect(&islandRect, mousePos);
+    ImVec2 size = g_islandExpanded ? ImVec2(600,300) : ImVec2(400,80);
+    int sw = GetScreenWidth();
+    ImVec2 pos((sw - size.x)*0.5f, 20);
+    POINT mp; GetCursorPos(&mp);
+    RECT r; r.left=(int)pos.x; r.top=0; r.right=(int)(pos.x+size.x); r.bottom=(int)(size.y+30);
+    return PtInRect(&r, mp);
 }
+#endif
 
-// === 绘制灵动岛主界面 ===
-void DrawIslandUI(bool isDesktop, bool isFullscreen, bool isMouseOver, float animationY, float deltaTime) {
-    if (!g_islandVisible) return;
+// === Draw island UI ===
+void DrawIslandUI(bool isMouseOver, bool isFullscreen, float animationY, float) {
+    int sw = GetScreenWidth();
+    ImVec2 size((float)(g_islandExpanded ? 600 : 400), (float)(g_islandExpanded ? 300 : 80));
 
-    // 灵动岛配置
-    ImVec2 size = g_islandExpanded ? ImVec2(600.0f, 300.0f) : ImVec2(400.0f, 80.0f);
-    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-    ImVec2 pos;
-    pos.x = (screenWidth - size.x) * 0.5f;
+#ifdef _WIN32
+    // Windows: island rendered inside fullscreen overlay
+    ImVec2 pos((sw - size.x)*0.5f, animationY);
 
-    bool isFullscreenEffective = isFullscreen;
-
-    // 全屏时鼠标悬停则展开
-    if (isMouseOver && isFullscreenEffective) {
-        isFullscreenEffective = false;
-    }
-
-    // 使用动画位置
-    pos.y = animationY;
+    // Clip input region to island bounds
+    POINT tl = {(LONG)pos.x, (LONG)pos.y};
+    ScreenToClient((HWND)GetMainWindowHandle(), &tl);
+    HRGN rgn = CreateRectRgn(tl.x, tl.y, tl.x+(LONG)size.x, tl.y+(LONG)size.y);
+    SetWindowRgn((HWND)GetMainWindowHandle(), rgn, TRUE);
 
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(size);
-
-    // 设置窗口区域
-    POINT topLeft = { (LONG)pos.x, (LONG)pos.y };
-    ScreenToClient(g_hwnd, &topLeft);
-    HRGN imguiRgn = CreateRectRgn(topLeft.x, topLeft.y,
-                                  topLeft.x + (LONG)size.x, topLeft.y + (LONG)size.y);
-    SetWindowRgn(g_hwnd, imguiRgn, TRUE);
+#else
+    // Linux: window IS the island; render full-window at (0,0)
+    (void)sw; (void)animationY;
+    ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(size);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0,0));
+#endif
 
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, size.y * 0.5f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0,0,0,0));
+
+    ImGuiWindowFlags wf = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
+                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground;
+#ifdef _WIN32
+    // On Windows, title must be "DynamicIsland" — don't add NoTitleBar
+#else
+    wf |= ImGuiWindowFlags_NoTitleBar;
+#endif
 
     bool open = true;
-    if (ImGui::Begin("DynamicIsland", &open,
-        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground)) {
+    if (ImGui::Begin(
+#ifdef _WIN32
+        "DynamicIsland"
+#else
+        "##IslandContent"
+#endif
+        , &open, wf)) {
 
-        auto& appearance = g_config.GetAppearance();
+        auto& app = g_config.GetAppearance();
 
-        // 绘制背景
+        // --- Click target ---
+        ImGui::SetCursorPos(ImVec2(0,0));
+        ImGui::InvisibleButton("##islandClick", size);
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+            g_islandExpanded = !g_islandExpanded;
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+            ImGui::OpenPopup("##islandCtxMenu");
+
+        if (ImGui::BeginPopup("##islandCtxMenu")) {
+            if (ImGui::MenuItem(g_islandExpanded ? "Collapse" : "Expand"))
+                g_islandExpanded = !g_islandExpanded;
+            if (ImGui::MenuItem(g_islandVisible ? "Hide Island" : "Show Island"))
+                g_islandVisible = !g_islandVisible;
+            ImGui::Separator();
+            if (ImGui::MenuItem("Settings")) g_showSettings = true;
+            ImGui::Separator();
+            if (ImGui::MenuItem("Exit")) g_running = false;
+            ImGui::EndPopup();
+        }
+
+        // --- Background ---
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p0 = ImGui::GetWindowPos();
-        ImU32 bgColor;
-        if (appearance.style == "white") {
-            bgColor = IM_COL32(240, 240, 240, 200);
-        } else {
-            bgColor = IM_COL32(30, 30, 40, 200);
-        }
-        dl->AddRectFilled(p0, ImVec2(p0.x + size.x, p0.y + size.y), bgColor, size.y * 0.5f);
+        ImU32 bg = (app.style == "white") ? IM_COL32(240,240,240,200) : IM_COL32(30,30,40,200);
+        dl->AddRectFilled(p0, ImVec2(p0.x+size.x, p0.y+size.y), bg, size.y*0.5f);
 
-        // 状态指示点
-        float cpuUsage = g_sysinfo.GetCpuUsage();
-        ImU32 dotColor;
-        if (cpuUsage < 50.0f) dotColor = IM_COL32(0, 255, 0, 255);
-        else if (cpuUsage < 80.0f) dotColor = IM_COL32(255, 255, 0, 255);
-        else dotColor = IM_COL32(255, 0, 0, 255);
+        // --- Status dot ---
+        float cpu = g_sysinfo.GetCpuUsage();
+        ImU32 dc = (cpu<50) ? IM_COL32(0,255,0,255) : (cpu<80) ? IM_COL32(255,255,0,255) : IM_COL32(255,0,0,255);
+        dl->AddCircleFilled(ImVec2(p0.x+20, p0.y+size.y*0.5f), 6, dc);
 
-        float cy = p0.y + size.y * 0.5f;
-        dl->AddCircleFilled(ImVec2(p0.x + 20, cy), 6.0f, dotColor);
-
-        // 时间显示
-        char timeBuf[16];
-        SYSTEMTIME st;
-        GetLocalTime(&st);
-        sprintf(timeBuf, "%02d:%02d:%02d", st.wHour, st.wMinute, st.wSecond);
-
+        // --- Time ---
+        char tbuf[16];
+        time_t now = time(nullptr); struct tm lt;
+#ifdef _WIN32
+        localtime_s(&lt, &now);
+#else
+        localtime_r(&now, &lt);
+#endif
+        snprintf(tbuf, sizeof(tbuf), "%02d:%02d:%02d", lt.tm_hour, lt.tm_min, lt.tm_sec);
         ImGui::SetCursorPos(ImVec2(40, 15));
-        if (appearance.style == "white") {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0, 200, 100, 255));
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0, 255, 100, 255));
-        }
-        float oldFontSize = ImGui::GetFont()->Scale;
-        ImGui::GetFont()->Scale = 1.2f;
-        ImGui::TextUnformatted(timeBuf);
-        ImGui::GetFont()->Scale = oldFontSize;
+        ImU32 tc = (app.style=="white") ? IM_COL32(0,200,100,255) : IM_COL32(0,255,100,255);
+        ImGui::PushStyleColor(ImGuiCol_Text, tc);
+        ImGui::GetFont()->Scale = 1.2f; ImGui::TextUnformatted(tbuf); ImGui::GetFont()->Scale = 1.0f;
         ImGui::PopStyleColor();
 
-        // 文本颜色
-        if (appearance.style == "white") {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(30, 30, 40, 255));
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 240, 240, 255));
-        }
+        ImU32 txt = (app.style=="white") ? IM_COL32(30,30,40,255) : IM_COL32(240,240,240,255);
+        ImGui::PushStyleColor(ImGuiCol_Text, txt);
 
+        // === Collapsed ===
         if (!g_islandExpanded) {
-            // === 收起状态 ===
             ImGui::SetCursorPos(ImVec2(40, 45));
-            float cpu = g_sysinfo.GetCpuUsage();
-            auto memInfo = g_sysinfo.GetMemoryInfo();
-            float memUsedGB = memInfo.used_bytes / (1024.0f * 1024.0f * 1024.0f);
-            float memTotalGB = memInfo.total_bytes / (1024.0f * 1024.0f * 1024.0f);
-            ImGui::Text("CPU: %.1f%% | Mem: %.1f/%.1f GB", cpu, memUsedGB, memTotalGB);
-
+            float cu = g_sysinfo.GetCpuUsage();
+            auto mm = g_sysinfo.GetMemoryInfo();
+            ImGui::Text("CPU: %.1f%% | Mem: %.1f/%.1f GB", cu,
+                        mm.used_bytes/(1024.f*1024*1024), mm.total_bytes/(1024.f*1024*1024));
             ImGui::SetCursorPos(ImVec2(280, 30));
-            float battery = g_sysinfo.GetBatteryPercent();
-            ImGui::Text("Batt: %.0f%%", battery);
-
-            auto batteryInfo = g_sysinfo.GetBatteryInfo();
-            if (batteryInfo.is_plugged) {
-                ImGui::SetCursorPos(ImVec2(280, 45));
-                ImGui::Text("Charging");
-            }
-
+            ImGui::Text("Batt: %.0f%%", g_sysinfo.GetBatteryPercent());
+            auto bi = g_sysinfo.GetBatteryInfo();
+            if (bi.is_plugged) { ImGui::SetCursorPos(ImVec2(280,45)); ImGui::Text("Charging"); }
 #if USE_FILE_TRANSFER
-            size_t fileCount = g_transferstation.GetFileCount();
-            if (fileCount > 0) {
-                uint64_t totalSize = g_transferstation.GetTotalSize();
-                ImGui::SetCursorPos(ImVec2(280, 60));
-                ImGui::Text("%zu files \xb7 %s", fileCount, FormatFileSize(totalSize).c_str());
-            }
+            size_t fc = g_transferstation.GetFileCount();
+            if (fc > 0) { ImGui::SetCursorPos(ImVec2(280,60)); ImGui::Text("%zu files | %s", fc, FormatFileSize(g_transferstation.GetTotalSize()).c_str()); }
 #endif
-        } else {
-            // === 展开状态 ===
-            ImGui::SetCursorPos(ImVec2(40, 45));
-            float cpu = g_sysinfo.GetCpuUsage();
-            auto memInfo = g_sysinfo.GetMemoryInfo();
-            float memUsedGB = memInfo.used_bytes / (1024.0f * 1024.0f * 1024.0f);
-            float memTotalGB = memInfo.total_bytes / (1024.0f * 1024.0f * 1024.0f);
-            ImGui::Text("CPU: %.1f%% | Mem: %.1f/%.1f GB", cpu, memUsedGB, memTotalGB);
+        }
+        // === Expanded ===
+        else {
+            float cu = g_sysinfo.GetCpuUsage();
+            auto mm = g_sysinfo.GetMemoryInfo();
+            auto bi = g_sysinfo.GetBatteryInfo();
+            ImGui::SetCursorPos(ImVec2(40,42));
+            ImGui::Text("CPU %.1f%%  |  Mem %.1f/%.1f GB  |  Batt %d%%%s",
+                        cu, mm.used_bytes/(1024.f*1024*1024), mm.total_bytes/(1024.f*1024*1024),
+                        bi.percent, bi.is_plugged ? " \xE2\x9A\xA1" : "");
+            auto gp = g_sysinfo.GetGPUInfo();
+            auto nt = g_sysinfo.GetNetworkInfo();
+            if (gp.available) { ImGui::SetCursorPos(ImVec2(40,62)); ImGui::Text("GPU %.1f%% %s", gp.usage_percent, gp.name.c_str()); }
+            if (nt.is_connected) { ImGui::SetCursorPos(ImVec2(340,62)); ImGui::Text("\xE2\x86\x93%.1f \xE2\x86\x91%.1f Mbps", nt.download_speed_mbps, nt.upload_speed_mbps); }
 
-            auto gpuInfo = g_sysinfo.GetGPUInfo();
-            if (gpuInfo.available) {
-                ImGui::SetCursorPos(ImVec2(40, 65));
-                ImGui::Text("GPU: %.1f%% | %s", gpuInfo.usage_percent, gpuInfo.name.c_str());
-            }
-
-            auto networkInfo = g_sysinfo.GetNetworkInfo();
-            if (networkInfo.is_connected) {
-                ImGui::SetCursorPos(ImVec2(40, 85));
-                ImGui::Text("\xE2\x86\x93%.1f Mbps | \xE2\x86\x91%.1f Mbps",
-                            networkInfo.download_speed_mbps, networkInfo.upload_speed_mbps);
-            }
-
-            ImGui::SetCursorPos(ImVec2(300, 45));
-            float battery = g_sysinfo.GetBatteryPercent();
-            ImGui::Text("Battery: %.0f%%", battery);
-
-            auto batteryInfo = g_sysinfo.GetBatteryInfo();
-            if (batteryInfo.is_plugged) {
-                ImGui::SetCursorPos(ImVec2(300, 65));
-                ImGui::Text("Charging");
-            } else if (batteryInfo.remaining_minutes > 0) {
-                ImGui::SetCursorPos(ImVec2(300, 65));
-                ImGui::Text("Remaining: %d min", batteryInfo.remaining_minutes);
-            }
-
-            auto displayInfo = g_sysinfo.GetDisplayInfo();
-            ImGui::SetCursorPos(ImVec2(300, 85));
-            ImGui::Text("Display: %dx%d @ %dHz",
-                        displayInfo.resolution_x, displayInfo.resolution_y, displayInfo.refresh_rate_hz);
+            // Separator
+            ImGui::SetCursorPos(ImVec2(20,88));
+            ImVec2 sp = ImGui::GetCursorScreenPos();
+            dl->AddLine(ImVec2(sp.x, sp.y), ImVec2(sp.x+size.x-40, sp.y), IM_COL32(255,255,255,40), 1.0f);
 
 #if USE_FILE_TRANSFER
-            // 文件中转站 UI
-            ImGui::SetCursorPos(ImVec2(40, 110));
-            ImGui::Text("File Transfer Station:");
+            // === File Transfer Station ===
+            ImGui::SetCursorPos(ImVec2(25,95));
+            size_t fc = g_transferstation.GetFileCount();
+            ImGui::Text("\xF0\x9F\x93\x81 File Transfer Station  \xc2\xb7  %zu files  \xc2\xb7  %s",
+                        fc, FormatFileSize(g_transferstation.GetTotalSize()).c_str());
 
+            ImGui::SetCursorPos(ImVec2(20,120));
+            ImGui::BeginChild("##FileList", ImVec2(size.x-40, 130), ImGuiChildFlags_Borders);
             auto files = g_transferstation.GetFiles();
             if (files.empty()) {
-                ImGui::SetCursorPos(ImVec2(60, 130));
-                ImGui::Text("Drop files here to add to transfer station");
+                ImGui::SetCursorPos(ImVec2(120,45));
+                ImGui::TextDisabled("Drop files here or click Import to add");
             } else {
-                // ... 文件列表 UI (与原代码相同，因篇幅略)
-                size_t fileCount = g_transferstation.GetFileCount();
-                uint64_t totalSize = g_transferstation.GetTotalSize();
-                ImGui::SetCursorPos(ImVec2(60, 130));
-                ImGui::Text("Total: %zu files \xb7 %s", fileCount, FormatFileSize(totalSize).c_str());
+                for (size_t i = 0; i < files.size(); i++) {
+                    const auto& f = files[i];
+                    std::string ext = f.name.substr(f.name.find_last_of('.')+1);
+                    const char* icon = "\xF0\x9F\x93\x84 "; // default
+                    if (ext=="jpg"||ext=="jpeg"||ext=="png"||ext=="gif"||ext=="bmp"||ext=="webp") icon="\xF0\x9F\x96\xBC ";
+                    else if (ext=="mp3"||ext=="wav"||ext=="flac"||ext=="ogg") icon="\xF0\x9F\x8E\xB5 ";
+                    else if (ext=="mp4"||ext=="avi"||ext=="mov"||ext=="mkv") icon="\xF0\x9F\x8E\xAC ";
+                    else if (ext=="zip"||ext=="rar"||ext=="7z"||ext=="tar"||ext=="gz") icon="\xF0\x9F\x93\xA6 ";
+                    else if (ext=="pdf") icon="\xF0\x9F\x93\x95 ";
+                    else if (ext=="txt"||ext=="md"||ext=="log") icon="\xF0\x9F\x93\x9D ";
+                    else if (ext=="cpp"||ext=="h"||ext=="py"||ext=="js"||ext=="c") icon="\xF0\x9F\x92\xBB ";
 
-                // 排序选项
-                ImGui::SetCursorPos(ImVec2(60, 150));
-                ImGui::Text("Sort by:");
-                ImGui::SameLine();
+                    char lbl[512];
+                    snprintf(lbl, sizeof(lbl), "%s %s##f%zu", icon, f.name.c_str(), i);
 
-                static int sortMode = 0;
-                if (ImGui::RadioButton("Time", sortMode == 0)) sortMode = 0;
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Name", sortMode == 1)) sortMode = 1;
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Size", sortMode == 2)) sortMode = 2;
-
-                // 排序文件
-                std::vector<FileInfo> sortedFiles = files;
-                switch (sortMode) {
-                case 0:
-                    std::sort(sortedFiles.begin(), sortedFiles.end(),
-                              [](const FileInfo& a, const FileInfo& b) { return a.added_time > b.added_time; });
-                    break;
-                case 1:
-                    std::sort(sortedFiles.begin(), sortedFiles.end(),
-                              [](const FileInfo& a, const FileInfo& b) { return a.name < b.name; });
-                    break;
-                case 2:
-                    std::sort(sortedFiles.begin(), sortedFiles.end(),
-                              [](const FileInfo& a, const FileInfo& b) { return a.size > b.size; });
-                    break;
-                }
-
-                for (size_t i = 0; i < sortedFiles.size(); i++) {
-                    const auto& file = sortedFiles[i];
-                    std::string fileSizeStr = FormatFileSize(file.size);
-
-                    // 格式化时间
-                    std::time_t time = std::chrono::system_clock::to_time_t(file.added_time);
-                    std::tm localTime;
-                    localtime_s(&localTime, &time);
-                    char timeStr[20];
-                    sprintf(timeStr, "%04d-%02d-%02d %02d:%02d",
-                            localTime.tm_year + 1900, localTime.tm_mon + 1,
-                            localTime.tm_mday, localTime.tm_hour, localTime.tm_min);
-
-                    // 文件扩展名
-                    std::wstring ext = L"";
-                    size_t dotPos = file.name.find_last_of(L'.');
-                    if (dotPos != std::wstring::npos) {
-                        ext = file.name.substr(dotPos + 1);
+                    bool sel = ((int)i == g_selectedFile);
+                    if (ImGui::Selectable(lbl, &sel, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(size.x-60,0))) {
+                        g_selectedFile = (int)i;
+                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                            g_transferstation.OpenFile(i);
                     }
+                    ImGui::SameLine(size.x-200);
+                    ImGui::TextDisabled("%s", FormatFileSize(f.size).c_str());
+                    time_t tt = std::chrono::system_clock::to_time_t(f.added_time);
+                    struct tm lt2;
+#ifdef _WIN32
+                    localtime_s(&lt2, &tt);
+#else
+                    localtime_r(&tt, &lt2);
+#endif
+                    char ts[32]; snprintf(ts, sizeof(ts), "%02d-%02d %02d:%02d", lt2.tm_mon+1, lt2.tm_mday, lt2.tm_hour, lt2.tm_min);
+                    ImGui::SameLine(size.x-120); ImGui::TextDisabled("%s", ts);
 
-                    std::string fileItemId = "fileItem##" + std::to_string(i);
-                    ImGui::PushID(fileItemId.c_str());
-
-                    float lineHeight = 35.0f;
-                    float yPos = 180 + i * lineHeight;
-
-                    // 图标
-                    ImGui::SetCursorPos(ImVec2(70, yPos));
-                    std::string iconText = "\xF0\x9F\x93\x84";
-                    if (ext == L"jpg" || ext == L"jpeg" || ext == L"png" ||
-                        ext == L"gif" || ext == L"bmp") iconText = "\xF0\x9F\x96\xBC\xEF\xB8\x8F";
-                    else if (ext == L"mp3" || ext == L"wav" || ext == L"flac") iconText = "\xF0\x9F\x8E\xB5";
-                    else if (ext == L"mp4" || ext == L"avi" || ext == L"mov") iconText = "\xF0\x9F\x8E\xAC";
-                    else if (ext == L"zip" || ext == L"rar" || ext == L"7z") iconText = "\xF0\x9F\x93\xA6";
-                    else if (ext == L"exe" || ext == L"msi") iconText = "\xF0\x9F\x92\xBE";
-                    ImGui::Text("%s", iconText.c_str());
-
-                    // 文件名
-                    ImGui::SetCursorPos(ImVec2(100, yPos));
-                    ImGui::Text("%s", file.name.c_str());
-
-                    // 大小
-                    ImGui::SetCursorPos(ImVec2(300, yPos));
-                    ImGui::Text("%s", fileSizeStr.c_str());
-
-                    // 时间
-                    ImGui::SetCursorPos(ImVec2(380, yPos));
-                    ImGui::Text("%s", timeStr);
-
-                    // 操作按钮
-                    float buttonStartX = 480.0f;
-                    float buttonWidth = 50.0f;
-                    float buttonSpacing = 5.0f;
-
-                    // 查找原始索引
-                    auto findOriginalIndex = [&]() -> size_t {
-                        for (size_t j = 0; j < files.size(); j++) {
-                            if (files[j].path == file.path) return j;
-                        }
-                        return (size_t)-1;
-                    };
-
-                    // 打开
-                    ImGui::SetCursorPos(ImVec2(buttonStartX, yPos - 2));
-                    if (ImGui::Button(("Open##" + std::to_string(i)).c_str(), ImVec2(buttonWidth, 20))) {
-                        size_t idx = findOriginalIndex();
-                        if (idx < files.size()) g_transferstation.OpenFile(idx);
+                    char cid[64]; snprintf(cid, sizeof(cid), "##ctx%zu", i);
+                    if (ImGui::BeginPopupContextItem(cid)) {
+                        g_selectedFile = (int)i;
+                        if (ImGui::MenuItem("Open")) g_transferstation.OpenFile(i);
+                        if (ImGui::MenuItem("Delete from station")) { g_transferstation.RemoveFile(i); if (g_selectedFile>=(int)files.size()) g_selectedFile=-1; }
+                        ImGui::Separator();
+#ifdef _WIN32
+                        if (ImGui::MenuItem("Copy path")) { /* clipboard */ }
+#else
+                        if (ImGui::MenuItem("Copy path"))
+                            glfwSetClipboardString((GLFWwindow*)GetMainWindowHandle(), f.path.c_str());
+#endif
+                        ImGui::EndPopup();
                     }
-
-                    // 复制
-                    ImGui::SetCursorPos(ImVec2(buttonStartX + buttonWidth + buttonSpacing, yPos - 2));
-                    if (ImGui::Button(("Copy##" + std::to_string(i)).c_str(), ImVec2(buttonWidth, 20))) {
-                        size_t idx = findOriginalIndex();
-                        if (idx < files.size()) {
-                            BROWSEINFO bi = { 0 };
-                            bi.lpszTitle = L"Select destination folder";
-                            LPITEMIDLIST pidl = SHBrowseForFolder(&bi);
-                            if (pidl) {
-                                wchar_t path[MAX_PATH];
-                                if (SHGetPathFromIDList(pidl, path)) {
-                                    g_transferstation.TransferCopyFile(idx, path);
-                                }
-                                CoTaskMemFree(pidl);
-                            }
-                        }
-                    }
-
-                    // 移动
-                    ImGui::SetCursorPos(ImVec2(buttonStartX + (buttonWidth + buttonSpacing) * 2, yPos - 2));
-                    if (ImGui::Button(("Move##" + std::to_string(i)).c_str(), ImVec2(buttonWidth, 20))) {
-                        size_t idx = findOriginalIndex();
-                        if (idx < files.size()) {
-                            BROWSEINFO bi = { 0 };
-                            bi.lpszTitle = L"Select destination folder";
-                            LPITEMIDLIST pidl = SHBrowseForFolder(&bi);
-                            if (pidl) {
-                                wchar_t path[MAX_PATH];
-                                if (SHGetPathFromIDList(pidl, path)) {
-                                    g_transferstation.TransferMoveFile(idx, path);
-                                }
-                                CoTaskMemFree(pidl);
-                            }
-                        }
-                    }
-
-                    // 预览
-                    ImGui::SetCursorPos(ImVec2(buttonStartX + (buttonWidth + buttonSpacing) * 3, yPos - 2));
-                    if (ImGui::Button(("Preview##" + std::to_string(i)).c_str(), ImVec2(buttonWidth, 20))) {
-                        size_t idx = findOriginalIndex();
-                        if (idx < files.size()) {
-                            g_selectedFileIndex = idx;
-                            g_showPreview = true;
-                        }
-                    }
-
-                    // 删除
-                    ImGui::SetCursorPos(ImVec2(buttonStartX + (buttonWidth + buttonSpacing) * 4, yPos - 2));
-                    if (ImGui::Button(("Delete##" + std::to_string(i)).c_str(), ImVec2(buttonWidth, 20))) {
-                        size_t idx = findOriginalIndex();
-                        if (idx < files.size()) g_transferstation.TransferDeleteFile(idx);
-                    }
-
-                    ImGui::PopID();
                 }
             }
+            ImGui::EndChild();
+
+            // Action buttons
+            ImGui::SetCursorPos(ImVec2(25,260));
+            if (ImGui::Button("Import Files", ImVec2(110,24))) {
+#ifdef _WIN32
+                OPENFILENAMEW ofn = {}; ofn.lStructSize = sizeof(ofn); ofn.Flags = OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST | OFN_EXPLORER;
+                wchar_t buf[8192] = {};
+                ofn.lpstrFile = buf; ofn.nMaxFile = 8192;
+                if (GetOpenFileNameW(&ofn)) {
+                    wchar_t* p = buf + ofn.nFileOffset;
+                    std::wstring dir(buf, ofn.nFileOffset);
+                    if (*p) {
+                        while (*p) {
+                            std::wstring fp = dir + L"\\" + p;
+                            char mb[512]; WideCharToMultiByte(CP_UTF8,0,fp.c_str(),-1,mb,512,nullptr,nullptr);
+                            g_transferstation.AddFile(mb);
+                            p += wcslen(p) + 1;
+                        }
+                    } else {
+                        char mb[512]; WideCharToMultiByte(CP_UTF8,0,buf,-1,mb,512,nullptr,nullptr);
+                        g_transferstation.AddFile(mb);
+                    }
+                }
+#else
+                FILE* fp = popen("zenity --file-selection --multiple --separator='\\n' --title='Select files' 2>/dev/null", "r");
+                if (fp) { char p[4096]; while (fgets(p,sizeof(p),fp)) { size_t l=strlen(p); if(l&&p[l-1]=='\n')p[l-1]=0; if(l) g_transferstation.AddFile(p); } pclose(fp); }
+#endif
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Open Selected", ImVec2(110,24))) {
+                if (g_selectedFile>=0 && g_selectedFile<(int)files.size()) g_transferstation.OpenFile(g_selectedFile);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Remove Selected", ImVec2(120,24))) {
+                if (g_selectedFile>=0 && g_selectedFile<(int)files.size()) { g_transferstation.RemoveFile(g_selectedFile); g_selectedFile=-1; }
+            }
+            ImGui::SameLine();
+            if (fc>0 && ImGui::Button("Clear All", ImVec2(90,24))) { g_transferstation.Clear(); g_selectedFile=-1; }
 #endif // USE_FILE_TRANSFER
         }
 
-        ImGui::PopStyleColor(); // 文本颜色
+        ImGui::PopStyleColor(); // text
     }
-
     ImGui::End();
     ImGui::PopStyleColor(); // WindowBg
     ImGui::PopStyleVar(3);
-
-    // === 文件预览窗口 (仅文件中转站启用时) ===
-#if USE_FILE_TRANSFER
-    if (g_showPreview && g_selectedFileIndex != (size_t)-1) {
-        auto files = g_transferstation.GetFiles();
-        if (g_selectedFileIndex < files.size()) {
-            const auto& file = files[g_selectedFileIndex];
-            auto previewInfo = g_transferstation.GetFilePreviewInfo(g_selectedFileIndex);
-
-            ImVec2 previewSize(800.0f, 600.0f);
-            int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-            int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-            ImVec2 previewPos((screenWidth - previewSize.x) * 0.5f, (screenHeight - previewSize.y) * 0.5f);
-
-            ImGui::SetNextWindowPos(previewPos, ImGuiCond_Always);
-            ImGui::SetNextWindowSize(previewSize, ImGuiCond_Always);
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(30, 30, 40, 240));
-
-            bool previewOpen = true;
-            if (ImGui::Begin("File Preview", &previewOpen,
-                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
-                ImGui::Text("File: %s", file.name.c_str());
-                ImGui::Separator();
-                ImGui::Text("File Type: %s", previewInfo.file_type.c_str());
-                ImGui::Text("Extension: %s", previewInfo.file_extension.c_str());
-                ImGui::Text("Size: %s", FormatFileSize(file.size).c_str());
-                ImGui::Text("Creation Time: %s", previewInfo.creation_time.c_str());
-                ImGui::Text("Last Modified: %s", previewInfo.last_modified_time.c_str());
-                ImGui::Text("Last Accessed: %s", previewInfo.last_access_time.c_str());
-                ImGui::Text("Path: %s", file.path.c_str());
-                ImGui::Separator();
-
-                if (previewInfo.is_text) {
-                    ImGui::BeginChild("TextContent", ImVec2(0, 300), true, ImGuiWindowFlags_HorizontalScrollbar);
-                    ImGui::TextUnformatted(previewInfo.text_content.c_str());
-                    ImGui::EndChild();
-                } else if (previewInfo.is_image) {
-                    ImGui::BeginChild("ImageContent", ImVec2(0, 300), true);
-                    ImGui::Text("[Image Preview - Not yet implemented]");
-                    ImGui::EndChild();
-                } else {
-                    ImGui::Text("No preview available for this file type");
-                }
-
-                if (!previewOpen) {
-                    g_showPreview = false;
-                    g_selectedFileIndex = -1;
-                }
-            }
-            ImGui::End();
-            ImGui::PopStyleColor();
-        }
-    }
+#ifndef _WIN32
+    ImGui::PopStyleVar(); // WindowPadding on Linux
 #endif
 }
 
-// === 绘制设置窗口 ===
+// === Draw settings window ===
 void DrawSettingsWindow() {
+#ifdef _WIN32
     if (!g_showSettings) return;
+    int sw = GetScreenWidth(), sh = GetScreenHeight();
+    ImVec2 ssz(600,400), spos((sw-ssz.x)*0.5f, (sh-ssz.y)*0.5f);
+    ImGui::SetNextWindowPos(spos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ssz, ImGuiCond_Always);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(40,40,50,255));
+    ImGuiWindowFlags sf = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+#else
+    if (!g_settingsWindow) return;
+    int ww, wh; glfwGetWindowSize(g_settingsWindow, &ww, &wh);
+    ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2((float)ww,(float)wh), ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGuiWindowFlags sf = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
+                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar;
+#endif
 
-    ImVec2 settingsSize(600.0f, 400.0f);
-    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-    ImVec2 settingsPos((screenWidth - settingsSize.x) * 0.5f, (screenHeight - settingsSize.y) * 0.5f);
+    bool open = true;
+    if (ImGui::Begin(
+#ifdef _WIN32
+        "\xe8\xae\xbe\xe7\xbd\xae"
+#else
+        "##SettingsContent"
+#endif
+        , &open, sf)) {
+        ImGui::Text("DynamicIsland Settings");
+        ImGui::Separator(); ImGui::Spacing();
 
-    ImGui::SetNextWindowPos(settingsPos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(settingsSize, ImGuiCond_Always);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(40, 40, 50, 255));
+        static int cat = 0;
+        const char* cats[] = {"General","Appearance","Notifications","File Station","Advanced","About"};
 
-    bool settingsOpen = true;
-    if (ImGui::Begin("\xe8\xae\xbe\xe7\xbd\xae", &settingsOpen,
-        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
-        ImGui::Text("DynamicIsland \xe8\xae\xbe\xe7\xbd\xae");
-        ImGui::Separator();
+        ImGui::BeginChild("##LP", ImVec2(150,0), ImGuiChildFlags_Borders);
+        for (int i=0;i<6;i++) { char l[64]; snprintf(l,sizeof(l),"%s##c%d",cats[i],i);
+            if (ImGui::Selectable(l, cat==i)) cat=i;
+            if (i==0 && ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(); }
+        ImGui::EndChild(); ImGui::SameLine();
 
-        static int selectedCategory = 0;
-        ImGui::BeginChild("Categories", ImVec2(150, 0), true);
-        if (ImGui::Selectable("\xe9\x80\x9a\xe7\x94\xa8", selectedCategory == 0)) selectedCategory = 0;
-        if (ImGui::Selectable("\xe5\xa4\x96\xe8\xa7\x82", selectedCategory == 1)) selectedCategory = 1;
-        if (ImGui::Selectable("\xe9\x80\x9a\xe7\x9f\xa5", selectedCategory == 2)) selectedCategory = 2;
-        if (ImGui::Selectable("\xe6\x96\x87\xe4\xbb\xb6\xe4\xb8\xad\xe8\xbd\xac\xe7\xab\x99", selectedCategory == 3)) selectedCategory = 3;
-        if (ImGui::Selectable("\xe9\xab\x98\xe7\xba\xa7", selectedCategory == 4)) selectedCategory = 4;
-        if (ImGui::Selectable("\xe5\x85\xb3\xe4\xba\x8e", selectedCategory == 5)) selectedCategory = 5;
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("Content", ImVec2(0, 0), true);
-        switch (selectedCategory) {
-        case 0:
-            ImGui::Text("\xe9\x80\x9a\xe7\x94\xa8\xe8\xae\xbe\xe7\xbd\xae");
-            ImGui::Separator();
-            if (ImGui::CollapsingHeader("\xe5\xbc\x80\xe6\x9c\xba\xe5\x90\xaf\xe5\x8a\xa8")) {
-                ImGui::Text("\xe8\xae\xbe\xe7\xbd\xae\xe7\xa8\x8b\xe5\xba\x8f\xe6\x98\xaf\xe5\x90\xa6\xe5\x9c\xa8\xe7\xb3\xbb\xe7\xbb\x9f\xe5\x90\xaf\xe5\x8a\xa8\xe6\x97\xb6\xe8\x87\xaa\xe5\x8a\xa8\xe8\xbf\x90\xe8\xa1\x8c");
-            }
-            if (ImGui::CollapsingHeader("\xe5\x88\xb7\xe6\x96\xb0\xe9\xa2\x91\xe7\x8e\x87")) {
-                ImGui::Text("\xe8\xb0\x83\xe6\x95\xb4\xe7\xb3\xbb\xe7\xbb\x9f\xe4\xbf\xa1\xe6\x81\xaf\xe7\x9a\x84\xe5\x88\xb7\xe6\x96\xb0\xe9\x80\x9f\xe5\xba\xa6");
-            }
-            break;
-        case 1:
-            ImGui::Text("\xe5\xa4\x96\xe8\xa7\x82\xe8\xae\xbe\xe7\xbd\xae");
-            ImGui::Separator();
-            if (ImGui::CollapsingHeader("\xe4\xb8\xbb\xe9\xa2\x98")) {
-                ImGui::Text("\xe9\x80\x89\xe6\x8b\xa9\xe7\x81\xb5\xe5\x8a\xa8\xe5\xb2\x9b\xe7\x9a\x84\xe5\xa4\x96\xe8\xa7\x82\xe4\xb8\xbb\xe9\xa2\x98");
-            }
-            if (ImGui::CollapsingHeader("\xe5\x8a\xa8\xe7\x94\xbb")) {
-                ImGui::Text("\xe9\x85\x8d\xe7\xbd\xae\xe5\xb1\x95\xe5\xbc\x80/\xe6\x94\xb6\xe8\xb5\xb7\xe5\x8a\xa8\xe7\x94\xbb\xe6\x95\x88\xe6\x9e\x9c");
-            }
-            break;
-        case 2:
-            ImGui::Text("\xe9\x80\x9a\xe7\x9f\xa5\xe8\xae\xbe\xe7\xbd\xae");
-            ImGui::Separator();
-            if (ImGui::CollapsingHeader("\xe7\xb3\xbb\xe7\xbb\x9f\xe9\x80\x9a\xe7\x9f\xa5")) {
-                ImGui::Text("\xe9\x85\x8d\xe7\xbd\xae\xe9\x80\x9a\xe7\x9f\xa5\xe6\x8f\x90\xe9\x86\x92\xe5\x8a\x9f\xe8\x83\xbd");
-            }
-            break;
-        case 3:
-            ImGui::Text("\xe6\x96\x87\xe4\xbb\xb6\xe4\xb8\xad\xe8\xbd\xac\xe7\xab\x99\xe8\xae\xbe\xe7\xbd\xae");
-            ImGui::Separator();
-            if (ImGui::CollapsingHeader("\xe5\xad\x98\xe5\x82\xa8\xe8\xae\xbe\xe7\xbd\xae")) {
-                ImGui::Text("\xe9\x85\x8d\xe7\xbd\xae\xe6\x96\x87\xe4\xbb\xb6\xe4\xb8\xad\xe8\xbd\xac\xe7\xab\x99\xe7\x9a\x84\xe5\xad\x98\xe5\x82\xa8\xe4\xbd\x8d\xe7\xbd\xae\xe5\x92\x8c\xe9\x99\x90\xe5\x88\xb6");
-            }
-            break;
-        case 4:
-            ImGui::Text("\xe9\xab\x98\xe7\xba\xa7\xe8\xae\xbe\xe7\xbd\xae");
-            ImGui::Separator();
-            if (ImGui::CollapsingHeader("\xe8\xb0\x83\xe8\xaf\x95\xe9\x80\x89\xe9\xa1\xb9")) {
-                ImGui::Text("\xe8\xb0\x83\xe8\xaf\x95\xe5\x92\x8c\xe8\xaf\x8a\xe6\x96\xad\xe9\x80\x89\xe9\xa1\xb9");
-            }
-            break;
-        case 5:
-            ImGui::Text("\xe5\x85\xb3\xe4\xba\x8e");
-            ImGui::Separator();
-            ImGui::Text("DynamicIsland v1.0");
-            ImGui::Text("\xe4\xb8\x80\xe4\xb8\xaa\xe6\xa8\xa1\xe4\xbf\xbf\xe8\x8b\xb9\xe6\x9e\x9c\xe7\x81\xb5\xe5\x8a\xa8\xe5\xb2\x9b\xe7\x9a\x84 Windows \xe7\xb3\xbb\xe7\xbb\x9f\xe7\x9b\x91\xe6\x8e\xa7\xe5\xb7\xa5\xe5\x85\xb7");
-            ImGui::Spacing();
-            ImGui::Text("\xe5\x8a\x9f\xe8\x83\xbd:");
-            ImGui::BulletText("\xe5\xae\x9e\xe6\x97\xb6\xe7\xb3\xbb\xe7\xbb\x9f\xe7\x9b\x91\xe6\x8e\xa7 (CPU, \xe5\x86\x85\xe5\xad\x98, GPU, \xe7\xbd\x91\xe7\xbb\x9c)");
-            ImGui::BulletText("\xe6\x96\x87\xe4\xbb\xb6\xe4\xb8\xad\xe8\xbd\xac\xe7\xab\x99\xe5\x8a\x9f\xe8\x83\xbd");
-            ImGui::BulletText("\xe5\x8f\xaf\xe5\xae\x9a\xe5\x88\xb6\xe7\x9a\x84\xe6\x80\xa7\xe8\x83\xbd\xe5\x92\x8c\xe5\xa4\x96\xe8\xa7\x82\xe8\xae\xbe\xe7\xbd\xae");
-            break;
+        ImGui::BeginChild("##RP", ImVec2(0,0), ImGuiChildFlags_Borders);
+        ImGui::Text("%s Settings", cats[cat]); ImGui::Separator(); ImGui::Spacing();
+        switch (cat) {
+        case 0: { static bool sw=g_config.GetBehavior().start_with_windows, sm=g_config.GetBehavior().start_minimized; static int rr=1000;
+            if(ImGui::Checkbox("Start with system",&sw)){g_config.GetBehavior().start_with_windows=sw;g_config.Save();}
+            if(ImGui::Checkbox("Start minimized",&sm)){g_config.GetBehavior().start_minimized=sm;g_config.Save();}
+            ImGui::Spacing(); ImGui::Text("Refresh: %d ms",rr); ImGui::SliderInt("##rr",&rr,500,5000,"%d ms"); break; }
+        case 1: { static float op=g_config.GetAppearance().opacity; static int si=(g_config.GetAppearance().style=="white")?1:0; const char* ss[]={"Dark","Light"};
+            if(ImGui::SliderFloat("Opacity##op",&op,0.3f,1.0f,"%.2f")){g_config.GetAppearance().opacity=op;g_config.Save();}
+            if(ImGui::Combo("Style",&si,ss,2)){g_config.GetAppearance().style=(si==1)?"white":"frosted";g_config.Save();} break; }
+        case 2: { static bool ne=g_config.GetBehavior().notification_enabled; static int mn=g_config.GetBehavior().max_notifications;
+            if(ImGui::Checkbox("Enable",&ne)){g_config.GetBehavior().notification_enabled=ne;g_config.Save();}
+            ImGui::Spacing(); ImGui::Text("Max: %d",mn); ImGui::SliderInt("##mn",&mn,1,20); break; }
+        case 3: ImGui::Text("File Transfer Station"); ImGui::BulletText("Max files: 100"); ImGui::BulletText("Max size: 1 GB"); break;
+        case 4: { static bool db=true; ImGui::Checkbox("Debug console",&db); ImGui::Spacing();
+            if(ImGui::Button("Reset to defaults")){g_config.ResetToDefaults();g_config.Save();} break; }
+        case 5: ImGui::Text("DynamicIsland v1.0"); ImGui::Text("Cross-platform system monitor"); ImGui::Spacing(); ImGui::Separator();
+            ImGui::BulletText("Real-time CPU, Memory, GPU, Network"); ImGui::BulletText("File Transfer Station"); ImGui::BulletText("Auto-start support"); break;
         }
         ImGui::EndChild();
 
-        if (!settingsOpen) {
-            g_showSettings = false;
-        }
+        if (!open) g_showSettings = false;
     }
     ImGui::End();
+#ifdef _WIN32
     ImGui::PopStyleColor();
+#else
+    ImGui::PopStyleVar();
+#endif
 }

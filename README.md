@@ -1,6 +1,9 @@
-# DynamicIsland-imgui-win
+# DynamicIsland-imgui
 
-一个基于 Dear ImGui 和 Direct3D11 的 Windows 桌面应用，模拟 macOS 上的 "灵动岛"（Dynamic Island）效果并在其中显示系统监控信息。
+一个基于 Dear ImGui 的跨平台桌面应用，模拟 macOS "灵动岛"（Dynamic Island）效果并集成系统监控与文件中转站。
+
+**Windows**：Win32 + Direct3D 11 全屏透明叠加层  
+**Linux**：GLFW + OpenGL 3 原生多窗口架构
 
 ## 项目地址
 
@@ -11,120 +14,142 @@
 
 ### 核心功能
 - **实时系统监控**：
-  - CPU / 每核利用率与频率
-  - GPU 利用率、显存、温度（支持 NVIDIA/AMD/Intel）
+  - CPU 利用率（总体 + 每核心）+ 频率
+  - GPU 利用率、显存、温度（NVIDIA NVML / AMD / Intel）
   - 内存使用情况
   - 电池状态与剩余时间
-  - 网络带宽统计（可启用）
-  - 时间显示（可显示秒）
-- **灵动岛界面**：灵动岛的动态交互界面
-- **状态栏托盘**：系统托盘图标，提供快捷操作
-- **设置系统**：独立的设置窗口，支持分类配置
-- **文件中转站(beta)**：支持文件拖放管理（可启用）
+  - 网络带宽统计（上下行速率，移动平均平滑）
+  - 时钟显示（含秒）
+- **灵动岛界面**：可折叠/展开的动态信息面板，全屏时自动隐藏
+- **系统托盘**：Windows 托盘图标 / Linux 键盘快捷键
+- **设置窗口**：独立设置窗口，分类配置（通用、外观、通知、高级）
+- **文件中转站**：文件暂存管理，支持拖放导入
 
 ### 界面特性
-- **透明效果**：半透明背景，融入桌面环境
-- **平滑动画**：展开/收起动画效果
-- **响应式设计**：根据系统状态自动调整
-- **主题**：暗色主题、磨砂玻璃样式、字体、颜色、圆角
+- 半透明圆角背景
+- 展开/收起平滑动画
+- 暗色/亮色主题切换
+- 鼠标穿透（岛外区域不拦截点击）
 
 ## 系统要求
 
-- **操作系统**：Windows 10 或 Windows 11（32/64 位）
-- **工具链**：
-  - CMake ≥ 3.20
-  - Ninja（或其他生成器）
-  - MinGW‑w64/GCC（g++）
-  - 或 Visual Studio 2019+
-- **依赖**：
-  - Direct3D 11（系统自带）
-  - Windows SDK（包含 DWM、taskschd、Pdh、iphlpapi 等）
-  - ImGui（已随仓库提供）
-  - 支持 C++17 的编译器
+### Windows
+- Windows 10 / 11（32/64 位）
+- Direct3D 11（系统自带）
+- MinGW‑w64（g++）或 Visual Studio 2019+
+- CMake ≥ 3.20, Ninja
+
+### Linux
+- 内核 ≥ 3.2, X11 显示服务
+- OpenGL 3.2+, GLFW 3
+- CMake ≥ 3.20, Ninja, g++ (C++17)
+- 可选：NVIDIA 专有驱动（用于 GPU 监控）、zenity（文件导入对话框）
+
+安装依赖（Debian/Ubuntu）：
+```bash
+sudo apt install cmake ninja-build g++ libglfw3-dev libgl-dev
+```
 
 ## 构建方法
 
-### 从源码构建
+项目使用同一套源码 + `#ifdef _WIN32` 条件编译，CMake 根据平台自动选择后端和依赖库。
 
-1. **克隆仓库**：
-   ```bash
-   git clone https://github.com/Python-island/Python-island.git
-   cd Python-island
-   git checkout pyisland-imgui
-   ```
+### Linux
 
-2. **构建项目**：
-   ```bash
-   mkdir build
-   cd build
-   cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..
-   cmake --build .
-   ```
+```bash
+git clone https://github.com/Python-island/Python-island.git
+cd Python-island && git checkout pyisland-imgui
+mkdir build && cd build
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..
+cmake --build .
+./DynamicIsland
+```
 
-3. **运行程序**：
-   生成的可执行文件 `DynamicIsland.exe` 会包含在 `build/` 目录中。
+### Windows (MinGW‑w64)
 
-4. **调试构建**：
-   ```bash
-   cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug ..
-   cmake --build .
-   ```
+```bash
+git clone https://github.com/Python-island/Python-island.git
+cd Python-island && git checkout pyisland-imgui
+mkdir build && cd build
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..
+cmake --build .
+DynamicIsland.exe
+```
 
-> 注意：你可以从 `CMakeLists.txt` 中注释掉 MinGW 编译器路径，CMake 会自动检测编译器。或者是手动指定编译器路径。
-
+> 如需调试构建，将 `-DCMAKE_BUILD_TYPE=Release` 替换为 `Debug`。
 
 ## 使用方法
 
 ### 基本操作
-- **左键点击**：展开/收起灵动岛
-- **右键点击**：打开系统托盘菜单
-- **ESC 键**：关闭设置窗口(beta)
-
-### 系统托盘菜单
-- **展开面板**：展开灵动岛详细信息
-- **设置**：打开设置窗口
-- **性能模式**：
-  - 省电 (5秒刷新)
-  - 平衡 (1秒刷新)
-  - 性能 (0.5秒刷新)
-- **开机启动**：设置是否随系统启动
-- **退出**：退出程序
+- **左键点击灵动岛**：展开/收起
+- **右键点击灵动岛**：打开上下文菜单（展开/收起、隐藏/显示、设置、退出）
+- **ESC 键**：关闭设置窗口
 
 ### 快捷操作
-- **Ctrl+Shift+Z**：快速退出程序
+- **Ctrl+Shift+Z**：退出程序
+
+### 上下文菜单
+- **Expand / Collapse**：切换面板大小
+- **Hide Island / Show Island**：显示/隐藏灵动岛
+- **Settings**：打开设置窗口
+- **Exit**：退出程序
 
 ## 设置窗口
 
-设置窗口包含以下分类：
-- **通用**：开机启动、刷新频率等基本设置
-- **外观**：主题、动画效果等界面设置
-- **通知**：系统通知配置
-- **文件中转站**：文件管理设置（需启用）
-- **高级**：调试选项
-- **关于**：版本信息和功能列表
+| 分类 | 内容 |
+|---|---|
+| **通用** | 开机启动、启动最小化、刷新频率 |
+| **外观** | 透明度滑块、暗色/亮色主题 |
+| **通知** | 通知开关、最大通知数量 |
+| **文件中转站** | 存储限制配置 |
+| **高级** | 调试控制台、重置默认设置 |
+| **关于** | 版本信息与技术栈 |
 
-## 文件中转站功能(beta)
+## 文件中转站
 
-文件中转站功能默认禁用，可通过修改 `CMakeLists.txt` 中的编译选项启用：
+展开灵动岛后，下半部分即为文件中转站。支持：
+- **拖放导入**（Linux 需 `zenity` 文件选择器）
+- 文件列表：图标、名称、大小、日期
+- **双击**打开文件，**右键**打开操作菜单（打开/删除/复制路径）
+- 批量操作按钮：导入、打开选中、移除选中、清空
+
+文件中转站默认启用，如需禁用，修改 `CMakeLists.txt` 中：
 
 ```cmake
-# 文件中转站功能开关 (0=禁用, 1=启用)
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-    USE_FILE_TRANSFER=1
+    USE_FILE_TRANSFER=0   # 0=禁用, 1=启用
 )
 ```
 
-修改后重新执行 cmake 配置并编译即可生效。
+## 跨平台架构
 
-**功能特性**：
-- 支持文件拖放到灵动岛
-- 支持文件的复制、移动、删除操作
-- 支持文件预览（图片、文本）
-- 支持文件拖出到其他应用
+```
+源码层（src/*.cpp / *.h）
+  └─ #ifdef _WIN32   → Windows 实现
+  └─ #else           → Linux 实现
+
+CMakeLists.txt
+  └─ if(WIN32)       → imgui_impl_win32 + dx11, D3D11/DWM/PDH/COM 库
+  └─ else()          → imgui_impl_glfw + opengl3, GLFW/OpenGL
+```
+
+| 模块 | Windows | Linux |
+|---|---|---|
+| 渲染 | Direct3D 11 + 全屏透明叠加层 | OpenGL 3 + GLFW 原生多窗口 |
+| 窗口管理 | `CreateWindowEx(WS_EX_TOPMOST\|WS_EX_TRANSPARENT)` | `glfwCreateWindow`（岛 + 设置独立窗口） |
+| 鼠标穿透 | `WM_NCHITTEST` 返回 `HTTRANSPARENT` | 窗口自然边界（无需额外处理） |
+| CPU | PDH（性能计数器） | `/proc/stat` |
+| GPU | NVML + DXGI + WMI | NVML（`libnvidia-ml.so`）+ `/sys/class/drm` |
+| 内存 | `GlobalMemoryStatusEx` | `/proc/meminfo` |
+| 电池 | `GetSystemPowerStatus` | `/sys/class/power_supply/BAT*` |
+| 网络 | `GetIfTable` | `/proc/net/dev` |
+| 托盘 | `Shell_NotifyIcon` + GDI+ | 键盘快捷键 |
+| 开机启动 | Task Scheduler COM | `~/.config/autostart/*.desktop` |
+| 文件操作 | `ShellExecuteA` / Win32 API | `xdg-open` / `std::filesystem` |
 
 ## 配置文件
 
-程序使用 `config.json`（默认与可执行文件同目录）保存设置。第一次运行会自动创建默认配置，格式如下：
+程序使用 `config.json` 保存设置，首次运行自动创建：
 
 ```json
 {
@@ -132,10 +157,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     "position": "top-center",
     "offset_x": 0,
     "offset_y": 20,
-    "idle_width": 120,
-    "idle_height": 40,
-    "expanded_width": 380,
-    "expanded_height": 450,
+    "idle_width": 120, "idle_height": 40,
+    "expanded_width": 380, "expanded_height": 450,
     "animation_speed": 12.0,
     "auto_hide_delay": 5.0,
     "show_seconds": false
@@ -170,69 +193,57 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 }
 ```
 
-所有字段在代码 `include/config.h` 定义。编辑完成后重启程序或通过 UI 生效。
-
 ## 项目结构
 
 ```
 /
-├─ CMakeLists.txt
-├─ include/                # 依赖
-├─ src/                    # 应用源代码
-│   ├ config.*             # 配置管理 (JSON 读写)
-│   ├ sysinfo.*            # 系统指标采集 (CPU/GPU/内存/网络)
-│   ├ scheduler.*          # 任务计划程序 (开机启动注册)
-│   ├ trayicon.*           # 托盘图标与菜单
-│   ├ transferstation.*    # 文件中转站 (可选)
-│   ├ window.*             # 窗口管理、D3D 设备、WndProc
-│   ├ ui.*                 # 灵动岛 UI 绘制 (主界面/设置)
-│   ├ Logger.cpp           # 日志系统 (文件 + 控制台)
-│   ├ logging.h            # 日志宏 (LOG_INFO 等)
-│   ├ mingw_compat.h       # MinGW 头文件兼容层
-│   ├ island.h             # 状态机定义 (待整合)
-│   └ main.cpp             # 程序入口、初始化、主循环
-├─ LICENSE                 # AGPL‑3.0
-└─ README.md               
+├── CMakeLists.txt              # 跨平台构建配置
+├── include/imgui/              # Dear ImGui 库（含所有后端）
+├── src/                        # 应用源码
+│   ├── main.cpp                # 入口点 & 主循环
+│   ├── window.h / window.cpp   # 窗口管理 & 渲染设备
+│   ├── ui.h / ui.cpp           # 灵动岛 & 设置 UI
+│   ├── sysinfo.h / sysinfo.cpp # 系统指标采集
+│   ├── trayicon.h / trayicon.cpp   # 托盘图标
+│   ├── scheduler.h / scheduler.cpp # 开机启动
+│   ├── transferstation.h / transferstation.cpp  # 文件中转站
+│   ├── config.h / config.cpp   # 配置管理 (JSON)
+│   ├── logging.h / Logger.cpp  # 日志系统
+│   ├── island.h                # 状态机定义
+│   └── mingw_compat.h          # MinGW 兼容层 (Windows only)
+├── assets/                     # 资源文件
+└── README.md
 ```
-
-### 主要模块
-- **config**：管理 config.json，定义配置结构体
-- **sysinfo**：后台线程采集系统指标（CPU/GPU/内存/网络/电池）
-- **trayicon**：托盘图标与菜单交互封装
-- **scheduler**：封装对 Windows 任务计划程序的操作，用于注册开机启动
-- **window**：窗口创建、D3D11 设备管理、WndProc 消息处理
-- **ui**：灵动岛界面绘制（收起/展开状态、设置窗口）
-- **Logger**：线程安全日志系统，支持文件输出和可选控制台输出
-- **mingw_compat**：MinGW 下缺失的 Windows COM 接口兼容定义
 
 ## 常见问题
 
 ### 程序无法启动
-- 检查系统是否满足最低要求
-- 确保 DirectX 11 已正确安装
-- 检查是否有其他程序占用端口
+- 确保系统满足最低要求
+- Windows：确保 DirectX 11 可用
+- Linux：确保 OpenGL 3.2+ 和 GLFW 已安装
 
 ### 灵动岛不显示
 - 检查是否被其他窗口遮挡
-- 检查系统托盘是否有程序图标
-- 尝试重启程序
+- Windows：检查系统托盘图标
+- Linux：使用 Ctrl+Shift+Z 退出后重启
 
-### 鼠标操作问题
-- 灵动岛只在显示区域内捕获鼠标
-- 非显示区域的鼠标事件会透传给下层窗口
+### 鼠标行为
+- **Windows**：全屏透明窗口 + `WM_NCHITTEST` 实现点击穿透，仅岛区域可交互
+- **Linux**：岛和设置各为独立原生窗口，窗口管理器自然处理输入路由
 
 ## 开发说明
 
-- **UI 界面**：依赖 ImGui，渲染使用 imgui_impl_win32.cpp 和 imgui_impl_dx11.cpp
-- **日志**：写入 `dynamicisland.log`，可通过取消 `main.cpp` 中的注释启用控制台输出
-- **系统监控**：通过 PDH、WMI、NVML 动态链接获取数据
-- **任务计划器**：接口封装对 COM 的使用，可注册隐藏启动任务
-
+- **UI**：Dear ImGui 即时模式，字体渲染，样式统一管理
+- **日志**：`log/dynamicisland.log`，支持控制台输出（调试用）
+- **监控线程**：独立后台线程采集系统数据，互斥锁保护线程安全
+- **跨平台策略**：`#ifdef _WIN32` 条件编译 + CMake 平台分支，同一份源码双平台构建
 
 ## 致谢
 
-- **ImGui**：Dear ImGui 库提供了优秀的即时模式 GUI
-- **DirectX**：微软的图形 API
+- **Dear ImGui** — Omar Cornut 的即时模式 GUI 库
+- **GLFW** — 跨平台 OpenGL 窗口库（Linux 后端）
+- **DirectX** — Microsoft 图形 API（Windows 后端）
+- **NVIDIA NVML** — GPU 监控接口
 
 ---
 

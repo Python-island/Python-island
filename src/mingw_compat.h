@@ -1,10 +1,18 @@
 #pragma once
 
+#ifdef _WIN32
+#ifdef __MINGW32__
+// ============================================================
+//  MinGW compatibility layer
+// ============================================================
+// MinGW's taskschd.h is missing the ILogonTrigger interface declaration
+// required for the Task Scheduler COM API.  This block fills the gap.
+// When building with MSVC the standard Windows SDK provides the
+// interface, so the guard below skips this block.
+
 #include <windows.h>
 #include <taskschd.h>
 
-// MinGW 兼容性：taskschd.h 缺少 ILogonTrigger 接口定义
-// 使用 Windows SDK 时该守卫跳过此段
 #ifndef __ILogonTrigger_INTERFACE_DEFINED__
 #define __ILogonTrigger_INTERFACE_DEFINED__
 
@@ -31,3 +39,8 @@ __CRT_UUID_DECL(ILogonTrigger, 0xda506fd1, 0x1a43, 0x4f66, 0x9e, 0x4b, 0xde, 0x3
 #endif
 
 #endif /* __ILogonTrigger_INTERFACE_DEFINED__ */
+
+#endif /* __MINGW32__ */
+#else
+// Linux: nothing required — mingw_compat.h is a no-op on non-Windows
+#endif /* _WIN32 */

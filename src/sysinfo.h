@@ -1,19 +1,32 @@
 #pragma once
 
-#include <windows.h>
-#include <pdh.h>
-#include <iphlpapi.h>
 #include <string>
 #include <atomic>
 #include <thread>
 #include <mutex>
 #include <chrono>
 #include <vector>
+#include <cstdint>
 
-// 前向声明NVML类型 (动态加载)
+#ifdef _WIN32
+#include <windows.h>
+#include <pdh.h>
+#include <iphlpapi.h>
+#else
+#include <fstream>
+#include <sstream>
+#include <map>
+#include <cstring>
+#include <unistd.h>
+#include <dirent.h>
+#endif
+
+// Forward declare NVML types (dynamically loaded on both platforms)
 typedef struct nvmlDevice_st* nvmlDevice_t;
 
-// 数据结构定义 - 完全匹配README规格
+// ============================================================
+// Shared data structs — match README spec on all platforms
+// ============================================================
 struct CPUInfo {
     float usage_percent = 0.0f;
     float usage_per_core[32] = {};
@@ -45,7 +58,7 @@ struct BatteryInfo {
     bool is_charging = false;
     bool is_plugged = false;
     int remaining_minutes = -1;
-    std::string power_mode = "平衡";
+    std::string power_mode = "Balanced";
 };
 
 struct DisplayInfo {
@@ -64,61 +77,77 @@ struct NetworkInfo {
     bool is_connected = false;
 };
 
-// 系统信息监控管理器
+// ============================================================
+// CPU jiffies structs (Linux /proc/stat monitoring)
+#ifndef _WIN32
+struct CPUJiffies {
+    unsigned long long user = 0, nice = 0, system = 0, idle = 0;
+    unsigned long long iowait = 0, irq = 0, softirq = 0, steal = 0;
+    unsigned long long total() const { return user + nice + system + idle + iowait + irq + softirq + steal; }
+    unsigned long long active() const { return total() - idle - iowait; }
+};
+struct PerCoreCPUJiffies {
+    std::vector<CPUJiffies> cores;
+    CPUJiffies total;
+};
+#endif
+
+// System information monitoring manager
+// ============================================================
 class SysInfoManager {
 public:
     static SysInfoManager& Instance();
-    
-    // 初始化和清理
+
+    // Initialise / shutdown
     bool Initialize();
     void Shutdown();
-    
-    // 启动/停止监控线程
+
+    // Start / stop the background monitoring thread
     void StartMonitoring();
     void StopMonitoring();
-    
-    // 数据获取接口 (线程安全)
+
+    // Thread-safe data access
     CPUInfo GetCPUInfo() const;
     GPUInfo GetGPUInfo() const;
     MemoryInfo GetMemoryInfo() const;
     BatteryInfo GetBatteryInfo() const;
     DisplayInfo GetDisplayInfo() const;
     NetworkInfo GetNetworkInfo() const;
-    
-    // 便捷接口
+
+    // Convenience shortcuts
     float GetCpuUsage() const { return GetCPUInfo().usage_percent; }
     float GetMemUsage() const { return GetMemoryInfo().usage_percent; }
     float GetBatteryPercent() const { return (float)GetBatteryInfo().percent; }
-    
-    // 更新显示信息 (在WM_DISPLAYCHANGE时调用)
+
+    // Update display info (called on display-change events)
     void UpdateDisplayInfo();
-    
+
 private:
     SysInfoManager() = default;
     ~SysInfoManager() { Shutdown(); }
     SysInfoManager(const SysInfoManager&) = delete;
     SysInfoManager& operator=(const SysInfoManager&) = delete;
-    
-    // 监控线程函数
+
+    // Background monitoring thread
     void MonitoringLoop();
-    
-    // 各数据采集函数
+
+    // Per-metric update helpers (called from the monitoring loop)
     void UpdateCPU();
     void UpdateGPU();
+#ifdef _WIN32
     void UpdateGPUWMI();
+#endif
+    void UpdateGPUGeneric();
     void UpdateMemory();
     void UpdateBattery();
     void UpdateNetwork();
-    void UpdateNetworkLegacy();
-    
-    // GPU检测和初始化
+
+    // GPU detection / init / cleanup
     void DetectGPU();
     void InitNVIDIA();
-    void InitAMD();
-    void InitIntel();
     void CleanupGPU();
-    
-    // 数据
+
+    // ---------- shared data ----------
     mutable std::mutex dataMutex;
     CPUInfo cpuData;
     GPUInfo gpuData;
@@ -126,27 +155,39 @@ private:
     BatteryInfo batteryData;
     DisplayInfo displayData;
     NetworkInfo networkData;
-    
-    // 线程控制
+
+    // ---------- thread control ----------
     std::atomic<bool> running{false};
     std::thread monitorThread;
-    
-    // CPU监控
+
+    // ---------- CPU monitoring ----------
+#ifdef _WIN32
     PDH_HQUERY cpuQuery = nullptr;
     PDH_HCOUNTER cpuTotalCounter = nullptr;
     std::vector<PDH_HCOUNTER> cpuCoreCounters;
-    
-    // 网络监控
+#else
+    PerCoreCPUJiffies prevCPUSample;
+    bool prevCPUSampleValid = false;
+#endif
+
+    // ---------- network monitoring ----------
     uint64_t prevDownloadBytes = 0;
     uint64_t prevUploadBytes = 0;
     std::chrono::steady_clock::time_point prevNetworkTime;
-    
-    // GPU监控
+
+    // ---------- GPU monitoring ----------
     bool gpuInitialized = false;
-    
-    // NVIDIA NVML (动态加载)
+
+#ifdef _WIN32
+    // NVIDIA NVML (dynamic load from nvml.dll)
     HMODULE nvmlHandle = nullptr;
+#else
+    // NVIDIA NVML (dynamic load from libnvidia-ml.so.1)
+    void* nvmlHandle = nullptr;
+#endif
     nvmlDevice_t nvmlDevice = nullptr;
+
+    // NVML function-pointer typedefs
     typedef int (*nvmlInit_t)(void);
     typedef int (*nvmlShutdown_t)(void);
     typedef int (*nvmlDeviceGetCount_t)(unsigned int*);
@@ -155,6 +196,8 @@ private:
     typedef int (*nvmlDeviceGetMemoryInfo_t)(nvmlDevice_t, void*);
     typedef int (*nvmlDeviceGetTemperature_t)(nvmlDevice_t, unsigned int, unsigned int*);
     typedef int (*nvmlDeviceGetName_t)(nvmlDevice_t, char*, unsigned int);
+    typedef int (*nvmlDeviceGetGraphicsClockInfo_t)(nvmlDevice_t, unsigned int*);
+
     nvmlInit_t nvmlInit = nullptr;
     nvmlShutdown_t nvmlShutdown = nullptr;
     nvmlDeviceGetCount_t nvmlDeviceGetCount = nullptr;
@@ -163,7 +206,8 @@ private:
     nvmlDeviceGetMemoryInfo_t nvmlDeviceGetMemoryInfo = nullptr;
     nvmlDeviceGetTemperature_t nvmlDeviceGetTemperature = nullptr;
     nvmlDeviceGetName_t nvmlDeviceGetName = nullptr;
+    nvmlDeviceGetGraphicsClockInfo_t nvmlDeviceGetGraphicsClockInfo = nullptr;
 };
 
-// 全局访问宏
+// Global access macro
 #define g_sysinfo SysInfoManager::Instance()

@@ -1,9 +1,17 @@
+// ===================================================================
+// main.cpp — Cross-platform entry point & main loop
+//   Windows: Win32 + Direct3D 11, single-instance via named mutex
+//   Linux:   GLFW + OpenGL 3, single-instance via flock()
+// ===================================================================
+
+#ifdef _WIN32
+// ========================== WINDOWS ================================
 #include <windows.h>
 #include <d3d11.h>
 #include <dwmapi.h>
 #include <tchar.h>
 #include <chrono>
-#include <stdio.h>
+#include <cstdio>
 #include <shlobj.h>
 
 #include "imgui.h"
@@ -22,398 +30,379 @@
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "shlwapi.lib")
 
-// === 初始化程序 ===
-bool InitializeApp(const bool silentStart) {
-    // 清除旧日志
+static bool InitializeApp(bool silentStart) {
     FILE* f = fopen("log/dynamicisland.log", "w");
-    if(f) fclose(f);
+    if (f) fclose(f);
 
-    LOG_INFO("=== DynamicIsland Starting ===");
+    LOG_INFO("=== DynamicIsland Starting (Windows) ===");
     LOG_INFO("silentStart=%d", silentStart);
-
-    // 初始化日志系统
-    // 这句话取消注释就可以启用控制台log
     Logger::Instance().SetConsoleOutput(true);
 
-    // 初始化 COM 库
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    if (FAILED(hr)) {
-        LOG_ERROR("Failed to initialize COM: 0x%X", hr);
-        return false;
-    }
+    if (FAILED(hr)) { LOG_ERROR("COM init failed: 0x%X", hr); return false; }
 
-    // 1. 加载配置
-    LOG_INFO("Loading config...");
-    if (!g_config.Load()) {
-        LOG_INFO("Config not found, creating default");
-        g_config.Save();
-    }
+    if (!g_config.Load()) { LOG_INFO("Config not found, creating default"); g_config.Save(); }
     LOG_INFO("Config loaded: opacity=%.2f", g_config.GetAppearance().opacity);
 
-    // 2. 初始化系统信息监控
-    LOG_INFO("Initializing sysinfo...");
-    if (!g_sysinfo.Initialize()) {
-        LOG_ERROR("Failed to initialize sysinfo");
-        MessageBox(nullptr, L"Failed to initialize system info monitor", L"Error", MB_OK);
-        return false;
-    }
-    LOG_INFO("Sysinfo initialized");
-
-    // 3. 启动监控线程
-    LOG_INFO("Starting monitoring thread...");
+    if (!g_sysinfo.Initialize()) { LOG_ERROR("Sysinfo init failed"); return false; }
     g_sysinfo.StartMonitoring();
-    LOG_INFO("Monitoring started");
 
-    // 4. 初始化任务计划程序
-    LOG_INFO("Initializing scheduler...");
     g_scheduler.Initialize();
-    if (g_config.GetBehavior().start_with_windows) {
-        LOG_INFO("Startup enabled, checking registration...");
-        if (!g_scheduler.IsRegistered()) {
-            LOG_INFO("Not registered, registering...");
-            TaskConfig taskConfig;
-            taskConfig.delayStart = true;
-            taskConfig.delaySeconds = 30;
-            taskConfig.hidden = true;
-            g_scheduler.Register(taskConfig);
-        }
+    if (g_config.GetBehavior().start_with_windows && !g_scheduler.IsRegistered()) {
+        TaskConfig tc; tc.delayStart = true; tc.delaySeconds = 30; tc.hidden = true;
+        g_scheduler.Register(tc);
     }
 
-    // 5. 创建窗口
-    LOG_INFO("Creating main window...");
-    g_hwnd = CreateMainWindow();
-    LOG_INFO("Window handle: %p", g_hwnd);
-    if (!g_hwnd) {
-        MessageBox(nullptr, L"Failed to create window", L"Error", MB_OK);
-        return false;
-    }
+    g_mainWindow = CreateMainWindow();
+    if (!g_mainWindow) { LOG_ERROR("Window creation failed"); return false; }
 
-    // 6. 初始化D3D
-    LOG_INFO("Initializing D3D...");
-    if (!CreateDeviceD3D(g_hwnd)) {
-        LOG_ERROR("Failed to initialize D3D");
+    if (!CreateDeviceD3D(g_mainWindow)) {
         CleanupDeviceD3D();
-        ::DestroyWindow(g_hwnd);
-        g_hwnd = nullptr;
+        ::DestroyWindow(g_mainWindow);
+        g_mainWindow = nullptr;
         return false;
     }
-    LOG_INFO("D3D initialized: device=%p", g_pd3dDevice);
 
-    // 7. 初始化托盘图标
-    LOG_INFO("Initializing tray icon...");
-    if (!g_trayIcon.Initialize(g_hwnd, WM_TRAYICON)) {
-        LOG_ERROR("Failed to initialize tray icon");
-    } else {
-        LOG_INFO("Tray icon initialized");
-    }
+    if (!g_trayIcon.Initialize(g_mainWindow, WM_TRAYICON))
+        LOG_ERROR("Tray icon init failed");
 
-    // 8. 设置托盘回调
-    g_trayIcon.SetShowHideCallback([]() {
-        g_islandVisible = !g_islandVisible;
+    g_trayIcon.SetShowHideCallback(   []() { g_islandVisible = !g_islandVisible; });
+    g_trayIcon.SetExpandCallback(     []() { g_islandExpanded = !g_islandExpanded; });
+    g_trayIcon.SetSettingsCallback(   []() { g_showSettings = true; });
+    g_trayIcon.SetExitCallback(       []() { g_running = false; PostQuitMessage(0); });
+    g_trayIcon.SetStartupCallback(    [](bool en) {
+        g_config.GetBehavior().start_with_windows = en; g_config.Save();
+        if (en) { TaskConfig tc; tc.delayStart = true; tc.delaySeconds = 30; tc.hidden = true; g_scheduler.Register(tc); }
+        else g_scheduler.Unregister();
     });
-
-    g_trayIcon.SetExpandCallback([]() {
-        g_islandExpanded = !g_islandExpanded;
-        g_trayIcon.UpdateMenuState(
-            g_windowVisible, g_islandExpanded,
-            PerformanceMode::BALANCED,
-            IslandPosition::TOP_CENTER,
-            g_config.GetBehavior().start_with_windows
-        );
-    });
-
-    g_trayIcon.SetPerformanceCallback([](PerformanceMode mode) {
-        // 性能模式设置
-    });
-
-    g_trayIcon.SetPositionCallback([](IslandPosition pos) {
-        g_config.GetIsland().position =
-            (pos == IslandPosition::TOP_CENTER) ? "top-center" :
-            (pos == IslandPosition::TOP_LEFT) ? "top-left" : "follow-taskbar";
+    g_trayIcon.SetPerformanceCallback([](PerformanceMode) {});
+    g_trayIcon.SetPositionCallback(   [](IslandPosition pos) {
+        g_config.GetIsland().position = (pos == IslandPosition::TOP_CENTER) ? "top-center" :
+                                        (pos == IslandPosition::TOP_LEFT) ? "top-left" : "follow-taskbar";
         g_config.Save();
     });
 
-    g_trayIcon.SetStartupCallback([](bool enabled) {
-        g_config.GetBehavior().start_with_windows = enabled;
-        g_config.Save();
-        if (enabled) {
-            TaskConfig taskConfig;
-            taskConfig.delayStart = true;
-            taskConfig.delaySeconds = 30;
-            taskConfig.hidden = true;
-            g_scheduler.Register(taskConfig);
-        } else {
-            g_scheduler.Unregister();
-        }
-    });
-
-    g_trayIcon.SetExitCallback([]() {
-        g_running = false;
-        PostQuitMessage(0);
-    });
-
-    g_trayIcon.SetSettingsCallback([]() {
-        g_showSettings = true;
-    });
-
-    // 9. 初始化ImGui
-    LOG_INFO("Initializing ImGui...");
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    LOG_INFO("ImGui context created");
-
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 20.0f;
-    style.FrameRounding = 8.0f;
-    style.GrabRounding = 8.0f;
-    style.PopupRounding = 8.0f;
-    style.ScrollbarRounding = 8.0f;
-    style.TabRounding = 8.0f;
+    style.WindowRounding = 20.0f; style.FrameRounding = 8.0f;
+    style.GrabRounding = 8.0f; style.PopupRounding = 8.0f;
+    style.ScrollbarRounding = 8.0f; style.TabRounding = 8.0f;
+    style.Alpha = g_config.GetAppearance().opacity;
 
-    auto& appearance = g_config.GetAppearance();
-    style.Alpha = appearance.opacity;
-
-    ImGui_ImplWin32_Init(g_hwnd);
+    ImGui_ImplWin32_Init(g_mainWindow);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-    // 10. 显示窗口
-    if (!silentStart && !g_config.GetBehavior().start_minimized) {
-        ::ShowWindow(g_hwnd, SW_SHOW);
-        g_windowVisible = true;
-    } else {
-        if (g_config.GetBehavior().start_minimized) {
-            ::ShowWindow(g_hwnd, SW_HIDE);
-            g_windowVisible = false;
-        } else {
-            ::ShowWindow(g_hwnd, SW_SHOW);
-            g_windowVisible = true;
-        }
-    }
+    bool startMin = g_config.GetBehavior().start_minimized;
+    if (!silentStart && !startMin) { ::ShowWindow(g_mainWindow, SW_SHOW); g_windowVisible = true; }
+    else if (startMin) { g_windowVisible = false; }
+    else { ::ShowWindow(g_mainWindow, SW_SHOW); g_windowVisible = true; }
 
-    // 11. 注册全局热键 Ctrl+Shift+Z
-    if (!RegisterHotKey(g_hwnd, 1, MOD_CONTROL | MOD_SHIFT, 'Z')) {
-        LOG_ERROR("Failed to register hotkey");
-    } else {
-        LOG_INFO("Hotkey Ctrl+Shift+Z registered");
-    }
+    RegisterHotKey(g_mainWindow, 1, MOD_CONTROL | MOD_SHIFT, 'Z');
 
-    // 12. 更新托盘菜单状态
-    g_trayIcon.UpdateMenuState(
-        g_windowVisible, g_islandExpanded,
-        PerformanceMode::BALANCED,
-        IslandPosition::TOP_CENTER,
-        g_config.GetBehavior().start_with_windows
-    );
+    g_trayIcon.UpdateMenuState(g_windowVisible, g_islandExpanded,
+        PerformanceMode::BALANCED, IslandPosition::TOP_CENTER,
+        g_config.GetBehavior().start_with_windows);
 
     return true;
 }
 
-// === 关闭程序 ===
-void ShutdownApp() {
+static void ShutdownApp() {
     g_config.Save();
-
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
-
     g_trayIcon.Shutdown();
     g_sysinfo.Shutdown();
     g_scheduler.Shutdown();
-
     CleanupDeviceD3D();
-
-    if (g_hwnd) {
-        ::DestroyWindow(g_hwnd);
-        g_hwnd = nullptr;
-    }
-
-    UnregisterHotKey(g_hwnd, 1);
-    LOG_INFO("Hotkey unregistered");
-
+    if (g_mainWindow) { ::DestroyWindow(g_mainWindow); g_mainWindow = nullptr; }
+    UnregisterHotKey(g_mainWindow, 1);
     ::UnregisterClass(L"DynamicIsland", GetModuleHandle(nullptr));
-
     CoUninitialize();
-    LOG_INFO("COM uninitialized");
 }
 
-// === 入口点 ===
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
-                   LPWSTR lpCmdLine, int nCmdShow) {
-    // 最早期的日志
-    FILE* earlyLog = fopen("dynamicisland_early.log", "w");
-    if (earlyLog) {
-        fprintf(earlyLog, "WinMain started\n");
-        fclose(earlyLog);
-    }
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
+    FILE* el = fopen("dynamicisland_early.log", "w");
+    if (el) { fprintf(el, "WinMain started\n"); fclose(el); }
 
-    // 解析命令行参数
     bool silentStart = false;
     for (int i = 1; i < __argc; ++i) {
         char arg[256] = {};
         WideCharToMultiByte(CP_UTF8, 0, __wargv[i], -1, arg, 256, nullptr, nullptr);
-        if (_stricmp(arg, "/background") == 0) {
-            silentStart = true;
-        }
+        if (_stricmp(arg, "/background") == 0) silentStart = true;
     }
 
-    earlyLog = fopen("dynamicisland_early.log", "a");
-    if (earlyLog) {
-        fprintf(earlyLog, "silentStart=%d\n", silentStart);
-        fclose(earlyLog);
-    }
-
-    // 单实例保护
     HANDLE hMutex = CreateMutex(nullptr, FALSE, TEXT("Global\\DynamicIsland"));
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        earlyLog = fopen("dynamicisland_early.log", "a");
-        if (earlyLog) {
-            fprintf(earlyLog, "Another instance running, exiting\n");
-            fclose(earlyLog);
-        }
-        HWND existingWnd = FindWindow(L"DynamicIsland", nullptr);
-        if (existingWnd) {
-            ShowWindow(existingWnd, SW_SHOW);
-            SetForegroundWindow(existingWnd);
-        }
+        HWND w = FindWindow(L"DynamicIsland", nullptr);
+        if (w) { ShowWindow(w, SW_SHOW); SetForegroundWindow(w); }
+        if (hMutex) CloseHandle(hMutex);
         return 0;
     }
 
-    earlyLog = fopen("dynamicisland_early.log", "a");
-    if (earlyLog) {
-        fprintf(earlyLog, "Mutex created, calling InitializeApp\n");
-        fclose(earlyLog);
-    }
+    if (!InitializeApp(silentStart)) { if (hMutex) CloseHandle(hMutex); return 1; }
 
-    // 初始化应用程序
-    if (!InitializeApp(silentStart)) {
-        if (hMutex) CloseHandle(hMutex);
-        return 1;
-    }
-
-    // === 主循环 ===
     LOG_INFO("Entering main loop");
-    MSG msg;
-    ZeroMemory(&msg, sizeof(msg));
-
+    MSG msg = {};
     auto lastTime = std::chrono::steady_clock::now();
-    int frameCount = 0;
-
-    // 动画变量
-    float animationY = 20.0f;
-    float targetY = 20.0f;
+    float animationY = 20.0f, targetY = 20.0f;
 
     while (g_running) {
-        // 处理Windows消息
         while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
-            ::TranslateMessage(&msg);
-            ::DispatchMessage(&msg);
-            if (msg.message == WM_QUIT)
-                g_running = false;
+            ::TranslateMessage(&msg); ::DispatchMessage(&msg);
+            if (msg.message == WM_QUIT) g_running = false;
         }
-
         if (!g_running) break;
 
-        // 计算 deltaTime
-        auto currentTime = std::chrono::steady_clock::now();
-        float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
-        lastTime = currentTime;
+        auto now = std::chrono::steady_clock::now();
+        float dt = std::chrono::duration<float>(now - lastTime).count();
+        lastTime = now;
 
-        // 动画更新
-        const float animationSpeed = 8.0f;
-        animationY += (targetY - animationY) * deltaTime * animationSpeed;
+        const float animSpeed = 8.0f;
+        animationY += (targetY - animationY) * dt * animSpeed;
 
-        // === 状态检测 ===
-        // 桌面检测
+        // Desktop / fullscreen detection
         bool isDesktop = false;
-        HWND foregroundWindow = GetForegroundWindow();
-        HWND desktopWindow = GetDesktopWindow();
-        HWND shellWindow = GetShellWindow();
-        if (!foregroundWindow || foregroundWindow == desktopWindow || foregroundWindow == shellWindow) {
-            isDesktop = true;
-        } else {
-            wchar_t className[256];
-            GetClassNameW(foregroundWindow, className, sizeof(className) / sizeof(wchar_t));
-            if (wcscmp(className, L"Progman") == 0 || wcscmp(className, L"WorkerW") == 0) {
-                isDesktop = true;
-            }
-        }
+        HWND fgw = GetForegroundWindow();
+        if (!fgw || fgw == GetDesktopWindow() || fgw == GetShellWindow()) isDesktop = true;
+        else { wchar_t cn[256]; GetClassNameW(fgw, cn, 256);
+               if (wcscmp(cn, L"Progman")==0 || wcscmp(cn, L"WorkerW")==0) isDesktop = true; }
 
-        // 全屏检测
         bool isFullscreen = false;
-        if (!isDesktop && foregroundWindow) {
-            WINDOWPLACEMENT placement;
-            if (GetWindowPlacement(foregroundWindow, &placement)) {
-                if (placement.showCmd == SW_SHOWMAXIMIZED) {
-                    isFullscreen = true;
-                }
-            }
-            if (!isFullscreen) {
-                RECT rect;
-                if (GetWindowRect(foregroundWindow, &rect)) {
-                    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-                    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-                    if (rect.right - rect.left >= screenWidth - 10 &&
-                        rect.bottom - rect.top >= screenHeight - 10) {
-                        isFullscreen = true;
-                    }
-                }
-            }
+        if (!isDesktop && fgw) {
+            WINDOWPLACEMENT wp; wp.length = sizeof(wp);
+            if (GetWindowPlacement(fgw, &wp) && wp.showCmd == SW_SHOWMAXIMIZED) isFullscreen = true;
+            else { RECT r; if (GetWindowRect(fgw, &r)) {
+                if (r.right-r.left >= GetSystemMetrics(SM_CXSCREEN)-10 &&
+                    r.bottom-r.top >= GetSystemMetrics(SM_CYSCREEN)-10) isFullscreen = true;
+            }}
         }
-        if (isDesktop) {
-            isFullscreen = false;
-        }
+        if (isDesktop) isFullscreen = false;
 
-        // 鼠标检测
         bool isMouseOver = IsMouseOverIsland();
-
-        // 全屏时动画目标位置
         if (isFullscreen && !isMouseOver) {
-            ImVec2 size = g_islandExpanded ? ImVec2(600.0f, 300.0f) : ImVec2(400.0f, 80.0f);
-            targetY = -size.y + 10;
-        } else {
-            targetY = 20.0f;
-        }
+            ImVec2 sz = g_islandExpanded ? ImVec2(600,300) : ImVec2(400,80);
+            targetY = -sz.y + 10;
+        } else targetY = 20.0f;
 
-        // === ImGui 帧开始 ===
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // 绘制灵动岛界面
-        if (g_islandVisible) {
-            DrawIslandUI(isDesktop, isFullscreen, isMouseOver, animationY, deltaTime);
-        }
-
-        // 绘制设置窗口
+        if (g_islandVisible)
+            DrawIslandUI(isDesktop, isFullscreen, isMouseOver, animationY, dt);
         DrawSettingsWindow();
 
-        // === 渲染 ===
         ImGui::Render();
-
-        // 清除背景 (透明)
-        const float clear_color[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        const float clear[4] = {0,0,0,0};
         g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
-        g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color);
-
-        // 绘制 ImGui
+        g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-
-        frameCount++;
-
-        // 呈现
         g_pSwapChain->Present(1, 0);
-
-        // 更新窗口几何
         UpdateWindowGeometry();
     }
 
-    // === 清理 ===
     ShutdownApp();
-
     if (hMutex) CloseHandle(hMutex);
-
     return 0;
 }
+
+#else // ======================== LINUX ================================
+#include <GLFW/glfw3.h>
+
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/file.h>
+
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+
+#include "logging.h"
+#include "config.h"
+#include "sysinfo.h"
+#include "trayicon.h"
+#include "scheduler.h"
+#include "window.h"
+#include "ui.h"
+
+static int g_lockFd = -1;
+
+static bool AcquireSingleInstanceLock() {
+    g_lockFd = open("/tmp/dynamicisland.lock", O_CREAT | O_RDWR, 0666);
+    if (g_lockFd < 0) return false;
+    struct flock fl = {};
+    fl.l_type = F_WRLCK; fl.l_whence = SEEK_SET;
+    if (fcntl(g_lockFd, F_SETLK, &fl) < 0) { close(g_lockFd); g_lockFd = -1; return false; }
+    return true;
+}
+
+static void ReleaseSingleInstanceLock() {
+    if (g_lockFd >= 0) {
+        struct flock fl = {}; fl.l_type = F_UNLCK; fl.l_whence = SEEK_SET;
+        fcntl(g_lockFd, F_SETLK, &fl); close(g_lockFd); g_lockFd = -1;
+    }
+    unlink("/tmp/dynamicisland.lock");
+}
+
+static bool InitializeApp(bool silentStart) {
+    FILE* f = fopen("log/dynamicisland.log", "w");
+    if (f) fclose(f);
+
+    LOG_INFO("=== DynamicIsland Starting (Linux) ===");
+    LOG_INFO("silentStart=%d", silentStart);
+    Logger::Instance().SetConsoleOutput(true);
+
+    if (!g_config.Load()) { LOG_INFO("Config not found, creating default"); g_config.Save(); }
+
+    if (!g_sysinfo.Initialize()) { LOG_ERROR("Sysinfo init failed"); return false; }
+    g_sysinfo.StartMonitoring();
+
+    g_scheduler.Initialize();
+
+    g_mainWindow = CreateMainWindow();
+    if (!g_mainWindow) { LOG_ERROR("Window creation failed"); return false; }
+
+    g_trayIcon.Initialize(g_mainWindow, 0);
+    g_trayIcon.SetShowHideCallback(   []() { g_islandVisible = !g_islandVisible; });
+    g_trayIcon.SetExpandCallback(     []() { g_islandExpanded = !g_islandExpanded; });
+    g_trayIcon.SetSettingsCallback(   []() { g_showSettings = true; });
+    g_trayIcon.SetExitCallback(       []() { g_running = false; });
+    g_trayIcon.SetStartupCallback(    [](bool en) {
+        g_config.GetBehavior().start_with_windows = en; g_config.Save();
+        if (en) g_scheduler.Register(); else g_scheduler.Unregister();
+    });
+
+    bool startMin = g_config.GetBehavior().start_minimized;
+    if (!silentStart && !startMin) { glfwShowWindow(g_mainWindow); g_windowVisible = true; }
+    else { g_windowVisible = false; }
+
+    LOG_INFO("Initialization complete");
+    return true;
+}
+
+static void ShutdownApp() {
+    g_config.Save();
+    DestroySettingsWindow();
+    ShutdownImGuiForWindow(g_mainCtx); g_mainCtx = nullptr;
+    if (g_mainWindow) { glfwDestroyWindow(g_mainWindow); g_mainWindow = nullptr; }
+    g_trayIcon.Shutdown();
+    g_sysinfo.Shutdown();
+    g_scheduler.Shutdown();
+    glfwTerminate();
+    ReleaseSingleInstanceLock();
+}
+
+static void RenderFrame(float animationY, float deltaTime, bool isFullscreen) {
+    ImGui::SetCurrentContext(g_mainCtx);
+    glfwMakeContextCurrent(g_mainWindow);
+
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    bool isMouseOver = glfwGetWindowAttrib(g_mainWindow, GLFW_HOVERED);
+    DrawIslandUI(isMouseOver, isFullscreen, animationY, deltaTime);
+
+    ImGui::Render();
+    int fbW, fbH;
+    glfwGetFramebufferSize(g_mainWindow, &fbW, &fbH);
+    glViewport(0, 0, fbW, fbH);
+    glClearColor(0,0,0,0); glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glfwSwapBuffers(g_mainWindow);
+}
+
+static void RenderSettingsFrame() {
+    if (!g_settingsWindow) return;
+    ImGui::SetCurrentContext(g_settingsCtx);
+    glfwMakeContextCurrent(g_settingsWindow);
+
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+    DrawSettingsWindow();
+
+    ImGui::Render();
+    int fbW, fbH;
+    glfwGetFramebufferSize(g_settingsWindow, &fbW, &fbH);
+    glViewport(0, 0, fbW, fbH);
+    glClearColor(0.13f,0.13f,0.17f,1.0f); glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glfwSwapBuffers(g_settingsWindow);
+}
+
+int main(int argc, char** argv) {
+    FILE* el = fopen("dynamicisland_early.log", "w");
+    if (el) { fprintf(el, "main started (Linux)\n"); fclose(el); }
+
+    bool silentStart = false;
+    for (int i = 1; i < argc; ++i)
+        if (strcmp(argv[i], "--background") == 0 || strcmp(argv[i], "/background") == 0)
+            silentStart = true;
+
+    if (!AcquireSingleInstanceLock()) { fprintf(stderr, "Another instance running.\n"); return 0; }
+    if (!InitializeApp(silentStart)) { ReleaseSingleInstanceLock(); return 1; }
+
+    LOG_INFO("Entering main loop");
+    auto lastTime = std::chrono::steady_clock::now();
+    float animationY = 20.0f, targetY = 20.0f;
+    int curW = 400, curH = 80;
+
+    while (g_running && !glfwWindowShouldClose(g_mainWindow)) {
+        glfwPollEvents();
+
+        auto now = std::chrono::steady_clock::now();
+        float dt = std::chrono::duration<float>(now - lastTime).count();
+        lastTime = now;
+
+        const float animSpeed = 8.0f;
+        animationY += (targetY - animationY) * dt * animSpeed;
+
+        bool isFullscreen = (glfwGetWindowMonitor(g_mainWindow) != nullptr);
+        bool isMouseOver = glfwGetWindowAttrib(g_mainWindow, GLFW_HOVERED);
+
+        if (isFullscreen && !isMouseOver) targetY = -curH + 10;
+        else targetY = 20.0f;
+
+        int tW = g_islandExpanded ? 600 : 400;
+        int tH = g_islandExpanded ? 300 : 80;
+        if (tW != curW || tH != curH) { curW = tW; curH = tH; glfwSetWindowSize(g_mainWindow, curW, curH); }
+
+        if (g_islandVisible && !glfwGetWindowAttrib(g_mainWindow, GLFW_VISIBLE))
+            glfwShowWindow(g_mainWindow);
+        else if (!g_islandVisible && glfwGetWindowAttrib(g_mainWindow, GLFW_VISIBLE))
+            glfwHideWindow(g_mainWindow);
+
+        if (g_islandVisible) {
+            GLFWmonitor* mon = glfwGetPrimaryMonitor();
+            const GLFWvidmode* vid = glfwGetVideoMode(mon);
+            glfwSetWindowPos(g_mainWindow, (vid->width - curW)/2, (int)animationY);
+        }
+
+        if (g_islandVisible)
+            RenderFrame(animationY, dt, isFullscreen);
+
+        if (g_showSettings && !g_settingsWindow)
+            g_settingsWindow = CreateSettingsWindow(650, 420);
+        else if (!g_showSettings && g_settingsWindow)
+            DestroySettingsWindow();
+
+        if (g_settingsWindow) {
+            if (glfwWindowShouldClose(g_settingsWindow)) {
+                g_showSettings = false; DestroySettingsWindow();
+            } else RenderSettingsFrame();
+        }
+    }
+
+    ShutdownApp();
+    return 0;
+}
+#endif

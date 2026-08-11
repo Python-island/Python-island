@@ -1,12 +1,17 @@
 #include "config.h"
+
+#ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
+#endif
+
 #include <fstream>
 #include <sstream>
 #include <iomanip>
 
-// 简单的JSON解析/生成实现
-// TODO: 使用已有的JSON库进行解析是比较好的方案，但是现在貌似已经完全够用了
+// Simple JSON serialization implementation
+// NOTE: a full JSON library would be preferable, but this is
+// sufficient for the fixed-format config.json used here.
 class SimpleJSON {
     public:
         static std::string EscapeString(const std::string& s) {
@@ -30,7 +35,7 @@ class SimpleJSON {
             std::ostringstream ss;
             ss << std::fixed << std::setprecision(precision) << f;
             std::string result = ss.str();
-            // 移除末尾的0
+            // Trim trailing zeros
             while (result.length() > 1 && result.find('.') != std::string::npos &&
                    (result.back() == '0' || result.back() == '.')) {
                 if (result.back() == '.') {
@@ -62,30 +67,31 @@ void Config::ResetToDefaults() {
 
 bool Config::Load() {
     std::lock_guard<std::mutex> lock(mtx);
-    
+
     std::string path = GetConfigPath();
     std::ifstream file(path);
     if (!file.is_open()) {
-        // 配置文件不存在，使用默认值
+        // Config file doesn't exist — use defaults
         return false;
     }
-    
+
     try {
         std::stringstream buffer;
         buffer << file.rdbuf();
         std::string content = buffer.str();
         file.close();
-        
-        // 简单的 JSON 解析
-        // 解析 island 配置
+
+        // Simple JSON parser for the known config structure
+
+        // Parse "island"
         size_t island_pos = content.find("\"island\":");
         if (island_pos != std::string::npos) {
             size_t start = content.find("{", island_pos);
             size_t end = content.find("}", start);
             if (start != std::string::npos && end != std::string::npos) {
                 std::string island_content = content.substr(start + 1, end - start - 1);
-                
-                // 解析 position
+
+                // position
                 size_t pos_pos = island_content.find("\"position\":");
                 if (pos_pos != std::string::npos) {
                     size_t quote_start = island_content.find("\"", pos_pos + 10);
@@ -94,8 +100,8 @@ bool Config::Load() {
                         island.position = island_content.substr(quote_start + 1, quote_end - quote_start - 1);
                     }
                 }
-                
-                // 解析 offset_x
+
+                // offset_x
                 size_t offset_x_pos = island_content.find("\"offset_x\":");
                 if (offset_x_pos != std::string::npos) {
                     size_t value_start = island_content.find_first_of("0123456789", offset_x_pos + 10);
@@ -104,8 +110,8 @@ bool Config::Load() {
                         island.offset_x = std::stoi(island_content.substr(value_start, value_end - value_start));
                     }
                 }
-                
-                // 解析 offset_y
+
+                // offset_y
                 size_t offset_y_pos = island_content.find("\"offset_y\":");
                 if (offset_y_pos != std::string::npos) {
                     size_t value_start = island_content.find_first_of("0123456789", offset_y_pos + 10);
@@ -116,16 +122,16 @@ bool Config::Load() {
                 }
             }
         }
-        
-        // 解析 appearance 配置
+
+        // Parse "appearance"
         size_t appearance_pos = content.find("\"appearance\":");
         if (appearance_pos != std::string::npos) {
             size_t start = content.find("{", appearance_pos);
             size_t end = content.find("}", start);
             if (start != std::string::npos && end != std::string::npos) {
                 std::string appearance_content = content.substr(start + 1, end - start - 1);
-                
-                // 解析 theme
+
+                // theme
                 size_t theme_pos = appearance_content.find("\"theme\":");
                 if (theme_pos != std::string::npos) {
                     size_t quote_start = appearance_content.find("\"", theme_pos + 8);
@@ -134,8 +140,8 @@ bool Config::Load() {
                         appearance.theme = appearance_content.substr(quote_start + 1, quote_end - quote_start - 1);
                     }
                 }
-                
-                // 解析 opacity
+
+                // opacity
                 size_t opacity_pos = appearance_content.find("\"opacity\":");
                 if (opacity_pos != std::string::npos) {
                     size_t value_start = appearance_content.find_first_of("0123456789.", opacity_pos + 10);
@@ -144,8 +150,8 @@ bool Config::Load() {
                         appearance.opacity = std::stof(appearance_content.substr(value_start, value_end - value_start));
                     }
                 }
-                
-                // 解析 style
+
+                // style
                 size_t style_pos = appearance_content.find("\"style\":");
                 if (style_pos != std::string::npos) {
                     size_t quote_start = appearance_content.find("\"", style_pos + 8);
@@ -156,16 +162,16 @@ bool Config::Load() {
                 }
             }
         }
-        
-        // 解析 behavior 配置
+
+        // Parse "behavior"
         size_t behavior_pos = content.find("\"behavior\":");
         if (behavior_pos != std::string::npos) {
             size_t start = content.find("{", behavior_pos);
             size_t end = content.find("}", start);
             if (start != std::string::npos && end != std::string::npos) {
                 std::string behavior_content = content.substr(start + 1, end - start - 1);
-                
-                // 解析 start_with_windows
+
+                // start_with_windows
                 size_t start_with_windows_pos = behavior_content.find("\"start_with_windows\":");
                 if (start_with_windows_pos != std::string::npos) {
                     size_t value_start = start_with_windows_pos + 21;
@@ -175,8 +181,8 @@ bool Config::Load() {
                         behavior.start_with_windows = (value == "true");
                     }
                 }
-                
-                // 解析 start_minimized
+
+                // start_minimized
                 size_t start_minimized_pos = behavior_content.find("\"start_minimized\":");
                 if (start_minimized_pos != std::string::npos) {
                     size_t value_start = start_minimized_pos + 20;
@@ -189,26 +195,26 @@ bool Config::Load() {
             }
         }
     } catch (const std::exception& e) {
-        // 解析错误，使用默认值
+        // Parse error — use defaults
         return false;
     }
-    
+
     return true;
 }
 
 bool Config::Save() {
     std::lock_guard<std::mutex> lock(mtx);
-    
+
     std::string path = GetConfigPath();
     std::ofstream file(path);
     if (!file.is_open()) {
         return false;
     }
-    
+
     try {
         file << "{\n";
-        
-        // 保存 island 配置
+
+        // island
         file << "  \"island\": {\n";
         file << "    \"position\": \"" << SimpleJSON::EscapeString(island.position) << "\",\n";
         file << "    \"offset_x\": " << island.offset_x << ",\n";
@@ -221,8 +227,8 @@ bool Config::Save() {
         file << "    \"auto_hide_delay\": " << SimpleJSON::FormatFloat(island.auto_hide_delay) << ",\n";
         file << "    \"show_seconds\": " << (island.show_seconds ? "true" : "false") << "\n";
         file << "  },\n";
-        
-        // 保存 appearance 配置
+
+        // appearance
         file << "  \"appearance\": {\n";
         file << "    \"theme\": \"" << SimpleJSON::EscapeString(appearance.theme) << "\",\n";
         file << "    \"accent_color\": \"" << SimpleJSON::EscapeString(appearance.accent_color) << "\",\n";
@@ -234,8 +240,8 @@ bool Config::Save() {
         file << "    \"font_family\": \"" << SimpleJSON::EscapeString(appearance.font_family) << "\",\n";
         file << "    \"style\": \"" << SimpleJSON::EscapeString(appearance.style) << "\"\n";
         file << "  },\n";
-        
-        // 保存 system 配置
+
+        // system
         file << "  \"system\": {\n";
         file << "    \"update_interval_ms\": " << system.update_interval_ms << ",\n";
         file << "    \"cpu_enabled\": " << (system.cpu_enabled ? "true" : "false") << ",\n";
@@ -244,8 +250,8 @@ bool Config::Save() {
         file << "    \"battery_enabled\": " << (system.battery_enabled ? "true" : "false") << ",\n";
         file << "    \"network_enabled\": " << (system.network_enabled ? "true" : "false") << "\n";
         file << "  },\n";
-        
-        // 保存 behavior 配置
+
+        // behavior
         file << "  \"behavior\": {\n";
         file << "    \"start_with_windows\": " << (behavior.start_with_windows ? "true" : "false") << ",\n";
         file << "    \"start_minimized\": " << (behavior.start_minimized ? "true" : "false") << ",\n";
@@ -254,18 +260,18 @@ bool Config::Save() {
         file << "    \"notification_enabled\": " << (behavior.notification_enabled ? "true" : "false") << ",\n";
         file << "    \"max_notifications\": " << behavior.max_notifications << "\n";
         file << "  }\n";
-        
+
         file << "}";
-        
+
         if (!file.good()) {
             return false;
         }
-        
+
         file.close();
     } catch (const std::exception& e) {
         file.close();
         return false;
     }
-    
+
     return true;
 }
